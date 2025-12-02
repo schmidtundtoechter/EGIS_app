@@ -1,0 +1,18 @@
+include MANIFEST.in
+include requirements.txt
+include *.json
+include *.md
+include *.py
+include *.txt
+recursive-include egis_integration *.css
+recursive-include egis_integration *.csv
+recursive-include egis_integration *.html
+recursive-include egis_integration *.ico
+recursive-include egis_integration *.js
+recursive-include egis_integration *.json
+recursive-include egis_integration *.md
+recursive-include egis_integration *.png
+recursive-include egis_integration *.py
+recursive-include egis_integration *.svg
+recursive-include egis_integration *.txt
+recursive-exclude egis_integration *.pyc

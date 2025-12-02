@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2023-04-18 16:03:02.882280",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "request_section",
+  "search_term",
+  "only_active",
+  "only_stocked",
+  "only_in_description",
+  "min_price",
+  "max_price",
+  "column_break_wsewl",
+  "sort_order",
+  "distributor_name",
+  "manufacturer_name",
+  "product_group_id",
+  "start_row",
+  "make_request",
+  "response_section",
+  "response",
+  "import_items"
+ ],
+ "fields": [
+  {
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": "Request"
+  },
+  {
+   "default": "0",
+   "fieldname": "make_request",
+   "fieldtype": "Button",
+   "label": "Make Request"
+  },
+  {
+   "fieldname": "response_section",
+   "fieldtype": "Section Break",
+   "label": "Response"
+  },
+  {
+   "fieldname": "search_term",
+   "fieldtype": "Data",
+   "label": "Search Term"
+  },
+  {
+   "fieldname": "response",
+   "fieldtype": "Table",
+   "label": "Response",
+   "options": "EGIS Search Query Response"
+  },
+  {
+   "fieldname": "only_active",
+   "fieldtype": "Select",
+   "label": "Only Active",
+   "options": "\ntrue\nfalse"
+  },
+  {
+   "fieldname": "only_stocked",
+   "fieldtype": "Select",
+   "label": "Only Stocked",
+   "options": "\ntrue\nfalse"
+  },
+  {
+   "fieldname": "only_in_description",
+   "fieldtype": "Select",
+   "label": "Only In Description",
+   "options": "\ntrue\nfalse"
+  },
+  {
+   "fieldname": "min_price",
+   "fieldtype": "Float",
+   "label": "Min Price"
+  },
+  {
+   "fieldname": "max_price",
+   "fieldtype": "Float",
+   "label": "Max Price"
+  },
+  {
+   "description": "Sort order to sort search results by price. Can be omitted if the default sorting by relevance is to be used.",
+   "fieldname": "sort_order",
+   "fieldtype": "Select",
+   "label": "Sort Order",
+   "options": "\nasc\ndesc"
+  },
+  {
+   "description": "If you want to search by multiple distributor, please separate them by comma, like this: Distributor 1, Distributor 2",
+   "fieldname": "distributor_name",
+   "fieldtype": "Data",
+   "label": "Distributor Name"
+  },
+  {
+   "description": "If you want to search by multiple manufacturers, please separate them by comma, like this: Manufacturer 1, Manufacturer 2",
+   "fieldname": "manufacturer_name",
+   "fieldtype": "Data",
+   "label": "Manufacturer Name"
+  },
+  {
+   "description": "If you want to search by multiple groups, please separate them by comma, like this: Group 1, Group 2.\nIf exactly one product group is specified, the search term can be omitted, otherwise it must contain at least 2 characters.",
+   "fieldname": "product_group_id",
+   "fieldtype": "Data",
+   "label": "Product Group ID"
+  },
+  {
+   "fieldname": "column_break_wsewl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Number of the first record to be returned in the response. If available, a maximum of 50 data records are always supplied starting with this number.",
+   "fieldname": "start_row",
+   "fieldtype": "Int",
+   "label": "Start Row"
+  },
+  {
+   "fieldname": "import_items",
+   "fieldtype": "Button",
+   "label": "Import Items"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2023-04-19 15:04:00.558409",
+ "modified_by": "Administrator",
+ "module": "EGIS Integration",
+ "name": "EGIS Search Query",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

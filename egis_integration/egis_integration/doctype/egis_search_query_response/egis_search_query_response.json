@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2023-04-19 08:40:28.501616",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_exists",
+  "proprietary_product_number",
+  "proprietary_product_description",
+  "manufacturer_id",
+  "manufacturer_name",
+  "manufacturer_product_number",
+  "global_product_number",
+  "product_group_id",
+  "purchase_price",
+  "currency_code",
+  "datetime",
+  "recommended_retail_price",
+  "image_url"
+ ],
+ "fields": [
+  {
+   "fieldname": "proprietary_product_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Proprietary Product Number"
+  },
+  {
+   "fieldname": "proprietary_product_description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Proprietary Product Description"
+  },
+  {
+   "fieldname": "manufacturer_id",
+   "fieldtype": "Data",
+   "label": "Manufacturer ID"
+  },
+  {
+   "fieldname": "manufacturer_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Manufacturer Name"
+  },
+  {
+   "fieldname": "manufacturer_product_number",
+   "fieldtype": "Data",
+   "label": "Manufacturer Product Number"
+  },
+  {
+   "fieldname": "global_product_number",
+   "fieldtype": "Data",
+   "label": "Global Product Number"
+  },
+  {
+   "fieldname": "product_group_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Product Group ID"
+  },
+  {
+   "fieldname": "purchase_price",
+   "fieldtype": "Data",
+   "label": "Purchase Price"
+  },
+  {
+   "fieldname": "currency_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Currency Code"
+  },
+  {
+   "fieldname": "datetime",
+   "fieldtype": "Datetime",
+   "label": "DateTime"
+  },
+  {
+   "fieldname": "recommended_retail_price",
+   "fieldtype": "Data",
+   "label": "Recommended Retail Price"
+  },
+  {
+   "fieldname": "image_url",
+   "fieldtype": "Data",
+   "label": "Image URL"
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "item_exists",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Item Exists"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2023-04-20 20:50:05.513595",
+ "modified_by": "Administrator",
+ "module": "EGIS Integration",
+ "name": "EGIS Search Query Response",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

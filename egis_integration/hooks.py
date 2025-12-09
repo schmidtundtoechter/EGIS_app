@@ -31,7 +31,7 @@ app_license = "MIT"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Sales Order" : "public/js/sales_order.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -195,7 +195,10 @@ fixtures = [
 				"Item-egis_data",
 				"Item-manufacturer_product_number",
                 "Item-global_product_number",
-				"Brand-id"
+				"Item-is_egis_item",
+				"Brand-id",
+				"Quotation Item-is_egis_item",
+				"Sales Order Item-is_egis_item"
             ]
         ]
     ]}

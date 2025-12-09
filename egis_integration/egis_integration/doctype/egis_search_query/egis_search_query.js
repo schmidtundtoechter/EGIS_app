@@ -20,6 +20,9 @@ frappe.ui.form.on('EGIS Search Query', {
 			}
 		}
 
+		// Show loading indicator
+		frappe.dom.freeze(__('Searching EGIS catalog, please wait...'));
+
 		frappe.call({
 			method: "egis_integration.egis_integration.doctype.egis_search_query.egis_search_query.make_request",
 			args: {
@@ -28,6 +31,8 @@ frappe.ui.form.on('EGIS Search Query', {
 				start_row: frm.doc.start_row
 			},
 			callback: function (r){
+				frappe.dom.unfreeze();
+
 				var response = JSON.parse(r.message.replace("&quot;", "'"))
 				console.log("response", response);
 				if (Object.keys(response).indexOf("ErrorMessage") > 0){
@@ -50,20 +55,50 @@ frappe.ui.form.on('EGIS Search Query', {
 						new_row.image_url = item.ImageUrl
 					});
 					frm.refresh_field('response');
+
+					// Show success message with count
+					frappe.show_alert({
+						message: __('Found {0} items', [response.Body.Item.length]),
+						indicator: 'green'
+					}, 5);
 				}
+			},
+			error: function(r) {
+				frappe.dom.unfreeze();
+				frappe.msgprint(__('An error occurred while searching EGIS. Please try again.'), __('Error'));
 			}
 		})
 	},
 
 	import_items: function(frm) {
+		if (!frm.doc.response || frm.doc.response.length === 0) {
+			frappe.msgprint(__('No items to import. Please search for items first.'), __('No Items'));
+			return;
+		}
+
+		// Show loading indicator
+		let item_count = frm.doc.response.length;
+		frappe.dom.freeze(__('Importing {0} item(s) from EGIS, please wait...', [item_count]));
+
 		frappe.call({
 			method: "egis_integration.egis_integration.doctype.egis_search_query.egis_search_query.import_items",
 			args: {
 				items: frm.doc.response
 			},
 			callback: function (r){
+				frappe.dom.unfreeze();
 				console.log("response", r.message);
-				frappe.msgprint("Item importation completed.", "Success")
+
+				frappe.show_alert({
+					message: __('Successfully imported {0} item(s)', [item_count]),
+					indicator: 'green'
+				}, 7);
+
+				frappe.msgprint(__('Item importation completed. {0} items have been imported to your system.', [item_count]), __('Success'));
+			},
+			error: function() {
+				frappe.dom.unfreeze();
+				frappe.msgprint(__('An error occurred during import. Please check the error log.'), __('Import Failed'));
 			}
 		})
 	}

@@ -38,4 +38,4 @@ Tests are conducted in December 2025/ January 20226. (EBC has no real version nu
  
 ## Potential further development opportunities:
 * The ordering process does not take place in ERPNext. There is no order export. The software is currently only designed for fast quotation creation.
-* With minor changes, the UK version of the store can also be connected. (A different URL must be linked to achive this.)
+* With minor changes, the UK version of the store can also be connected. (A different URL must be linked to achieve this.)

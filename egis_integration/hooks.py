@@ -1,7 +1,7 @@
 from . import __version__ as app_version
 
 app_name = "egis_integration"
-app_title = "EGIS Integration"
+app_title = "EGIS Integration (SUT)"
 app_publisher = "Phamos"
 app_description = "Frappe app for getting data from EGIS using its API"
 app_icon = "octicon octicon-file-directory"

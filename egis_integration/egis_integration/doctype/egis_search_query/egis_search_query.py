@@ -330,12 +330,31 @@ def make_request(search_term, search_options, start_row):
 def import_items(items):
 	items = items.replace("&quot;", "'")
 	items = json.loads(items)
+
+	# Get EGIS settings for configurable values
+	egis_settings = frappe.get_doc("EGIS Settings")
+
+	# Validate required settings
+	if not egis_settings.default_selling_price_list:
+		frappe.throw("Please configure 'Default Selling Price List' in EGIS Settings before importing items.", title="Configuration Missing")
+
+	if not egis_settings.parent_item_group:
+		frappe.throw("Please configure 'Item Group' in EGIS Settings before importing items.", title="Configuration Missing")
+
+	# Verify price list exists
+	if not frappe.db.exists("Price List", egis_settings.default_selling_price_list):
+		frappe.throw(f"Price List '{egis_settings.default_selling_price_list}' does not exist. Please create it first or select a different price list in EGIS Settings.", title="Price List Not Found")
+
+	# Verify parent item group exists
+	if not frappe.db.exists("Item Group", egis_settings.parent_item_group):
+		frappe.throw(f"Item Group '{egis_settings.parent_item_group}' does not exist. Please create it first or select a different item group in EGIS Settings.", title="Item Group Not Found")
+
 	for item in items:
 		if item.get("item_exists"):
-			update_item(item)
+			update_item(item, egis_settings)
 			continue
 		brand = get_brand(item)
-		item_group = get_item_group(item)
+		item_group = get_item_group(item, egis_settings)
 		item_doc = frappe.new_doc("Item")
 		item_doc.item_code = item.get("proprietary_product_number")
 		item_doc.item_name = item.get("proprietary_product_description")
@@ -359,14 +378,14 @@ def import_items(items):
 			# Check if price already exists
 			existing_price = frappe.db.exists("Item Price", {
 				"item_code": item_doc.name,
-				"price_list": "Standard Selling"
+				"price_list": egis_settings.default_selling_price_list
 			})
 
 			if not existing_price:
 				frappe.get_doc({
 					"doctype": "Item Price",
 					"item_code": item_doc.name,
-					"price_list": "Standard Selling",
+					"price_list": egis_settings.default_selling_price_list,
 					"price_list_rate": flt(item.get("purchase_price"))
 				}).insert()
 			else:
@@ -374,19 +393,19 @@ def import_items(items):
 				frappe.db.set_value("Item Price", existing_price, "price_list_rate", flt(item.get("purchase_price")))
 
 		# Store retail price separately if available (for reference only)
-		if item.get("recommended_retail_price"):
-			# You can create a custom price list called "EGIS Retail" for reference
-			if frappe.db.exists("Price List", "EGIS Retail"):
+		if item.get("recommended_retail_price") and egis_settings.retail_price_list:
+			# Use configured retail price list if specified
+			if frappe.db.exists("Price List", egis_settings.retail_price_list):
 				existing_retail_price = frappe.db.exists("Item Price", {
 					"item_code": item_doc.name,
-					"price_list": "EGIS Retail"
+					"price_list": egis_settings.retail_price_list
 				})
 
 				if not existing_retail_price:
 					frappe.get_doc({
 						"doctype": "Item Price",
 						"item_code": item_doc.name,
-						"price_list": "EGIS Retail",
+						"price_list": egis_settings.retail_price_list,
 						"price_list_rate": flt(item.get("recommended_retail_price"))
 					}).insert()
 				else:
@@ -405,19 +424,11 @@ def get_brand(item):
 		brand = brand.name
 	return brand
 
-def get_item_group(item):
-	item_group = item.get("product_group_id")
-	if not frappe.db.exists("Item Group", item_group):
-		item_group = frappe.get_doc({
-			"doctype": "Item Group",
-			"parent_item_group": "EGIS",
-			"item_group_name": item_group
-		})
-		item_group.insert()
-		item_group = item_group.name
-	return item_group
+def get_item_group(item, egis_settings):
+	# Use the configured item group from EGIS Settings for all items
+	return egis_settings.parent_item_group
 
-def update_item(item):
+def update_item(item, egis_settings):
 	item_erpnext = frappe.get_doc("Item", item.get("proprietary_product_number"))
 	changed = False
 	if item_erpnext.item_name != item.get("proprietary_product_description"):
@@ -438,7 +449,7 @@ def update_item(item):
 		item_erpnext.brand = brand
 		changed = True
 
-	item_group = get_item_group(item)
+	item_group = get_item_group(item, egis_settings)
 	if item_erpnext.item_group != item_group:
 		item_erpnext.item_group = item_group
 		changed = True
@@ -452,12 +463,12 @@ def update_item(item):
 		item_erpnext.save()
 
 	# Only update Selling price (we don't need Buying price for EGIS items)
-	update_item_price(item, "Selling")
+	update_item_price(item, egis_settings)
 
-def update_item_price(item, buying_or_selling):
+def update_item_price(item, egis_settings):
 	"""
 	Update Item Price for EGIS items
-	Only updates Standard Selling price list with purchase price
+	Uses configured price lists from EGIS Settings
 	"""
 	# Use purchase price for selling (requirement: don't use high retail prices)
 	purchase_price = flt(item.get("purchase_price"))
@@ -465,11 +476,11 @@ def update_item_price(item, buying_or_selling):
 	if not purchase_price:
 		return
 
-	# Update or create Standard Selling price
+	# Update or create Selling price using configured price list
 	selling_prices = frappe.db.get_list("Item Price",
 		filters={
 			"item_code": item.get("proprietary_product_number"),
-			"price_list": "Standard Selling"
+			"price_list": egis_settings.default_selling_price_list
 		},
 		fields=["name", "price_list_rate"]
 	)
@@ -483,18 +494,18 @@ def update_item_price(item, buying_or_selling):
 		frappe.get_doc({
 			"doctype": "Item Price",
 			"item_code": item.get("proprietary_product_number"),
-			"price_list": "Standard Selling",
+			"price_list": egis_settings.default_selling_price_list,
 			"price_list_rate": purchase_price
 		}).insert()
 
-	# Also store retail price for reference if EGIS Retail price list exists
-	if item.get("recommended_retail_price"):
-		if frappe.db.exists("Price List", "EGIS Retail"):
+	# Also store retail price for reference if retail price list is configured
+	if item.get("recommended_retail_price") and egis_settings.retail_price_list:
+		if frappe.db.exists("Price List", egis_settings.retail_price_list):
 			retail_price = flt(item.get("recommended_retail_price"))
 			retail_price_list = frappe.db.get_list("Item Price",
 				filters={
 					"item_code": item.get("proprietary_product_number"),
-					"price_list": "EGIS Retail"
+					"price_list": egis_settings.retail_price_list
 				},
 				fields=["name", "price_list_rate"]
 			)
@@ -506,6 +517,6 @@ def update_item_price(item, buying_or_selling):
 				frappe.get_doc({
 					"doctype": "Item Price",
 					"item_code": item.get("proprietary_product_number"),
-					"price_list": "EGIS Retail",
+					"price_list": egis_settings.retail_price_list,
 					"price_list_rate": retail_price
 				}).insert()

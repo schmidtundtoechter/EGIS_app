@@ -96,6 +96,11 @@ def build_search_query_xml(username, password, search_term, search_options, star
 		ET.SubElement(query_elem, 'ManufacturerName').text = ''
 		ET.SubElement(query_elem, 'ProductGroupId').text = ''
 
+	# Sorting inside Query (optional - for sorting by price)
+	if search_options and search_options.get('SortOrder'):
+		sorting = ET.SubElement(query_elem, 'Sorting')
+		ET.SubElement(sorting, 'SortOrder').text = search_options['SortOrder']
+
 	# Pagination inside Query
 	pagination = ET.SubElement(query_elem, 'Pagination')
 	ET.SubElement(pagination, 'StartRow').text = str(start_row) if start_row else '1'

@@ -113,7 +113,7 @@ var get_search_options = function(frm){
 		search_options.OnlyStocked = frm.doc.only_stocked
 	}
 	if (frm.doc.only_in_description){
-		search_options.MinPrice = frm.doc.only_in_description
+		search_options.OnlyInDescription = frm.doc.only_in_description
 	}
 	if (frm.doc.min_price){
 		search_options.MinPrice = frm.doc.min_price
@@ -122,18 +122,16 @@ var get_search_options = function(frm){
 		search_options.MaxPrice = frm.doc.max_price
 	}
 	if (frm.doc.sort_order){
-		search_options.Sorting = {
-			"SortOrder": frm.doc.sort_order
-		}
+		search_options.SortOrder = frm.doc.sort_order
 	}
 	if (frm.doc.distributor_name){
-		search_options.DistributorName = frm.doc.distributor_name.split(",").map((e) => e.trim()) 
+		search_options.DistributorName = frm.doc.distributor_name.split(",").map((e) => e.trim())
 	}
 	if (frm.doc.manufacturer_name){
-		search_options.ManufacturerName = frm.doc.manufacturer_name.split(",").map((e) => e.trim()) 
+		search_options.ManufacturerName = frm.doc.manufacturer_name.split(",").map((e) => e.trim())
 	}
 	if (frm.doc.product_group_id){
-		search_options.ProductGroupId = frm.doc.product_group_id.split(",").map((e) => e.trim()) 
+		search_options.ProductGroupId = frm.doc.product_group_id.split(",").map((e) => e.trim())
 	}
 	return search_options
 }

@@ -229,7 +229,15 @@ def parse_search_response_xml(xml_response):
 
 @frappe.whitelist()
 def make_request(search_term, search_options, start_row):
-	search_options = json.loads(search_options or {})
+	# Debug: Log incoming parameters
+	print("="*50)
+	print("DEBUG make_request() received:")
+	print(f"  search_term: '{search_term}' (type: {type(search_term)})")
+	print(f"  search_options: '{search_options}' (type: {type(search_options)})")
+	print(f"  start_row: '{start_row}' (type: {type(start_row)})")
+	print("="*50)
+
+	search_options = json.loads(search_options or '{}')
 	print(search_options, type(search_options))
 	egis_settings = frappe.get_doc("EGIS Settings")
 
@@ -249,6 +257,7 @@ def make_request(search_term, search_options, start_row):
 	endpoint = f"{base_url}/{component}/searchQuery"
 
 	# Build XML request body
+	print(f"DEBUG: Calling build_search_query_xml with search_term='{search_term}'")
 	xml_payload = build_search_query_xml(
 		egis_settings.user,
 		egis_settings.get_password("password"),
@@ -257,7 +266,10 @@ def make_request(search_term, search_options, start_row):
 		start_row
 	)
 
-	print("XML Payload:", xml_payload)
+	print("="*50)
+	print("XML Payload being sent to EGIS:")
+	print(xml_payload)
+	print("="*50)
 
 	# Headers must include Content-Type: text/xml and charset UTF-8
 	headers = {

@@ -38,6 +38,9 @@ frappe.ui.form.on('EGIS Search Query', {
 				if (Object.keys(response).indexOf("ErrorMessage") > 0){
 					frappe.msgprint(`An error has occurred:\n${JSON.stringify(response)}`, "Error")
 				} else {
+					// Clear previous results before adding new ones
+					frm.clear_table('response');
+
 					response.Body.Item.forEach(item => {
 						var new_row = frm.add_child('response');
 						new_row.item_exists = item.item_exists

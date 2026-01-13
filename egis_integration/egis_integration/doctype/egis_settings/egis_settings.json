@@ -6,12 +6,22 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "api_credentials_section",
   "sandbox",
   "url",
   "user",
-  "password"
+  "password",
+  "item_settings_section",
+  "default_selling_price_list",
+  "retail_price_list",
+  "parent_item_group"
  ],
  "fields": [
+  {
+   "fieldname": "api_credentials_section",
+   "fieldtype": "Section Break",
+   "label": "API Credentials"
+  },
   {
    "default": "0",
    "fieldname": "sandbox",
@@ -33,6 +43,34 @@
    "fieldname": "password",
    "fieldtype": "Password",
    "label": "Password"
+  },
+  {
+   "fieldname": "item_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Item Import Settings"
+  },
+  {
+   "fieldname": "default_selling_price_list",
+   "fieldtype": "Link",
+   "label": "Default Selling Price List",
+   "options": "Price List",
+   "reqd": 1,
+   "description": "Price list to use when importing items for selling (e.g., 'Standard Selling' or 'Standard-Verkauf'). This price list must exist in your system."
+  },
+  {
+   "fieldname": "retail_price_list",
+   "fieldtype": "Link",
+   "label": "Retail Price List (Optional)",
+   "options": "Price List",
+   "description": "Optional price list to store EGIS recommended retail prices for reference. Leave empty if not needed."
+  },
+  {
+   "fieldname": "parent_item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group",
+   "reqd": 1,
+   "description": "Item group for all imported EGIS items (e.g., 'EGIS'). All items imported from EGIS will be assigned to this item group."
   }
  ],
  "index_web_pages_for_search": 1,

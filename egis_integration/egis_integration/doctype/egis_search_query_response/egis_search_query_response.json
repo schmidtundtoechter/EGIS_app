@@ -29,7 +29,7 @@
   },
   {
    "fieldname": "proprietary_product_description",
-   "fieldtype": "Data",
+   "fieldtype": "Text",
    "in_list_view": 1,
    "label": "Proprietary Product Description"
   },

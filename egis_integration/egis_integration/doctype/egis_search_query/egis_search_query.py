@@ -227,18 +227,84 @@ def parse_search_response_xml(xml_response):
 		frappe.log_error(f"XML Parse Error: {str(e)}\nResponse: {xml_response}", "EGIS XML Parse Error")
 		return {'error': True, 'ErrorMessage': 'Invalid XML response', 'ErrorDescription': str(e)}
 
+def build_product_detail_xml(username, password, product_number):
+	"""Build XML document for ProductDetail query to get full description"""
+	root = ET.Element('ProductDetail')
+	root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+	root.set('xmlns', 'http://www.egis-online.de/EBC/schema/ProductDetail')
+	root.set('xsi:schemaLocation', 'http://www.egis-online.de/EBC/schema/ProductDetail ProductDetail.xsd')
+
+	# Transaction Header
+	header = ET.SubElement(root, 'TransactionHeader')
+	ET.SubElement(header, 'VersionId').text = '1.00'
+	ET.SubElement(header, 'GenerationDateTime').text = frappe.utils.now()
+	ET.SubElement(header, 'ERP').text = 'ERPNext'
+	ET.SubElement(header, 'Login').text = username
+	ET.SubElement(header, 'Password').text = password
+
+	# Query with product number
+	query_elem = ET.SubElement(root, 'Query')
+	ET.SubElement(query_elem, 'ProprietaryProductNumber').text = product_number
+
+	xml_str = ET.tostring(root, encoding='utf-8', method='xml')
+	return xml_str.decode('utf-8')
+
+def fetch_product_detail(product_number):
+	"""Fetch full product details including long description from EGIS"""
+	try:
+		egis_settings = frappe.get_doc("EGIS Settings")
+		base_url = egis_settings.url.rstrip('/')
+
+		# Determine component name based on URL
+		if 'egis-online.de' in base_url:
+			component = "Artikelstamm"
+		else:
+			component = "ProductMaster"
+
+		endpoint = f"{base_url}/{component}/productDetail"
+
+		xml_payload = build_product_detail_xml(
+			egis_settings.user,
+			egis_settings.get_password("password"),
+			product_number
+		)
+
+		headers = {'Content-Type': 'text/xml; charset=utf-8'}
+		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30)
+
+		if response.status_code == 200:
+			# Parse the response to extract long description
+			root = ET.fromstring(response.text)
+			ns = {'ns': 'http://www.egis-online.de/EBC/schema/ProductDetailResponse'}
+
+			# Look for LongDescription field
+			long_desc = root.find('.//ns:LongDescription', ns)
+			if long_desc is not None and long_desc.text:
+				return long_desc.text
+
+			# Fallback to Description if LongDescription not available
+			desc = root.find('.//ns:Description', ns)
+			if desc is not None and desc.text:
+				return desc.text
+
+			# Try without namespace
+			long_desc_no_ns = root.find('.//LongDescription')
+			if long_desc_no_ns is not None and long_desc_no_ns.text:
+				return long_desc_no_ns.text
+
+			desc_no_ns = root.find('.//Description')
+			if desc_no_ns is not None and desc_no_ns.text:
+				return desc_no_ns.text
+
+	except Exception as e:
+		frappe.log_error(f"Error fetching ProductDetail for {product_number}: {str(e)}", "EGIS ProductDetail Error")
+		return None
+
+	return None
+
 @frappe.whitelist()
 def make_request(search_term, search_options, start_row):
-	# Debug: Log incoming parameters
-	print("="*50)
-	print("DEBUG make_request() received:")
-	print(f"  search_term: '{search_term}' (type: {type(search_term)})")
-	print(f"  search_options: '{search_options}' (type: {type(search_options)})")
-	print(f"  start_row: '{start_row}' (type: {type(start_row)})")
-	print("="*50)
-
 	search_options = json.loads(search_options or '{}')
-	print(search_options, type(search_options))
 	egis_settings = frappe.get_doc("EGIS Settings")
 
 	# Build correct endpoint URL according to EBC documentation
@@ -257,7 +323,6 @@ def make_request(search_term, search_options, start_row):
 	endpoint = f"{base_url}/{component}/searchQuery"
 
 	# Build XML request body
-	print(f"DEBUG: Calling build_search_query_xml with search_term='{search_term}'")
 	xml_payload = build_search_query_xml(
 		egis_settings.user,
 		egis_settings.get_password("password"),
@@ -266,11 +331,6 @@ def make_request(search_term, search_options, start_row):
 		start_row
 	)
 
-	print("="*50)
-	print("XML Payload being sent to EGIS:")
-	print(xml_payload)
-	print("="*50)
-
 	# Headers must include Content-Type: text/xml and charset UTF-8
 	headers = {
 		'Content-Type': 'text/xml; charset=utf-8'
@@ -278,11 +338,6 @@ def make_request(search_term, search_options, start_row):
 
 	try:
 		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30)
-
-		# Log response details for debugging
-		print("Response Status Code:", response.status_code)
-		print("Response Headers:", dict(response.headers))
-		print("Raw Response:", response.text[:500])  # First 500 chars
 
 		# Check HTTP status
 		if response.status_code != 200:
@@ -370,12 +425,20 @@ def import_items(items):
 		if item.get("item_exists"):
 			update_item(item, egis_settings)
 			continue
+
+		# Fetch full long description from EGIS ProductDetail API
+		product_number = item.get("proprietary_product_number")
+		long_description = fetch_product_detail(product_number)
+		if not long_description:
+			# Fallback to short description if long description not available
+			long_description = item.get("proprietary_product_description")
+
 		brand = get_brand(item)
 		item_group = get_item_group(item, egis_settings)
 		item_doc = frappe.new_doc("Item")
-		item_doc.item_code = item.get("proprietary_product_number")
+		item_doc.item_code = product_number
 		item_doc.item_name = item.get("proprietary_product_description")
-		item_doc.description = item.get("proprietary_product_description")
+		item_doc.description = long_description
 		item_doc.item_group = item_group
 		item_doc.brand = brand
 		item_doc.manufacturer_product_number = item.get("manufacturer_product_number")
@@ -448,11 +511,19 @@ def get_item_group(item, egis_settings):
 def update_item(item, egis_settings):
 	item_erpnext = frappe.get_doc("Item", item.get("proprietary_product_number"))
 	changed = False
+
+	# Fetch full long description from EGIS ProductDetail API
+	product_number = item.get("proprietary_product_number")
+	long_description = fetch_product_detail(product_number)
+	if not long_description:
+		# Fallback to short description if long description not available
+		long_description = item.get("proprietary_product_description")
+
 	if item_erpnext.item_name != item.get("proprietary_product_description"):
 		item_erpnext.item_name = item.get("proprietary_product_description")
 		changed = True
-	if item_erpnext.description != item.get("proprietary_product_description"):
-		item_erpnext.description = item.get("proprietary_product_description")
+	if item_erpnext.description != long_description:
+		item_erpnext.description = long_description
 		changed = True
 	if item_erpnext.manufacturer_product_number != item.get("manufacturer_product_number"):
 		item_erpnext.manufacturer_product_number = item.get("manufacturer_product_number")
@@ -491,6 +562,18 @@ def update_item_price(item, egis_settings):
 	purchase_price = flt(item.get("purchase_price"))
 
 	if not purchase_price:
+		# Log diagnostic information to understand why price is missing
+		frappe.log_error(
+			f"Item Code: {item.get('proprietary_product_number')}\n"
+			f"Purchase Price Value: {item.get('purchase_price')}\n"
+			f"Purchase Price (after flt): {purchase_price}\n"
+			f"Full Item Data: {json.dumps(item, indent=2, default=str)}",
+			"EGIS Price Update Failed - Missing Purchase Price"
+		)
+		frappe.throw(
+			f"Cannot update price for item {item.get('proprietary_product_number')}: "
+			f"Purchase price not available in EGIS response. Check Error Log for details."
+		)
 		return
 
 	# Update or create Selling price using configured price list

@@ -55,47 +55,103 @@ def update_egis_prices_in_sales_order(sales_order_name):
 			# Search for the item in EGIS by item code
 			price_info = get_egis_item_price(item_code, egis_settings)
 
-			if price_info and price_info.get("purchase_price"):
-				# Update the rate in Sales Order
-				item_row = item_info["row"]
-				old_rate = item_row.rate
-				new_rate = flt(price_info["purchase_price"])
-
-				# Clear any margins to ensure rate equals price_list_rate
-				item_row.margin_type = None
-				item_row.margin_rate_or_amount = 0
-				item_row.discount_percentage = 0
-				item_row.discount_amount = 0
-
-				# Update all rate-related fields
-				item_row.price_list_rate = new_rate
-				item_row.rate = new_rate
-				item_row.amount = new_rate * item_row.qty
-				item_row.net_rate = new_rate
-				item_row.net_amount = new_rate * item_row.qty
-
-				# Also update base currency fields if exchange rate exists
-				if hasattr(item_row, 'conversion_factor') and item_row.conversion_factor:
-					item_row.base_rate = new_rate * item_row.conversion_factor
-					item_row.base_amount = item_row.amount * item_row.conversion_factor
-					item_row.base_net_rate = new_rate * item_row.conversion_factor
-					item_row.base_net_amount = item_row.net_amount * item_row.conversion_factor
-
-				updated_items.append({
-					"item_code": item_code,
-					"old_rate": old_rate,
-					"new_rate": new_rate
-				})
-			else:
+			# Validate price info
+			if not price_info:
+				# Item not found in EGIS at all
+				frappe.log_error(
+					f"Item Code: {item_code}\n"
+					f"Reason: Item not found in EGIS search results\n"
+					f"This usually means the item is discontinued or no longer available.",
+					"EGIS Sales Order Price Update - Item Not Found"
+				)
 				failed_items.append({
 					"item_code": item_code,
-					"reason": "Price not found in EGIS"
+					"reason": "Item not found in EGIS catalog (may be discontinued)"
 				})
+				continue
+
+			purchase_price_str = price_info.get("purchase_price")
+
+			# Validate purchase price exists and is not zero/empty
+			if not purchase_price_str or purchase_price_str == "" or purchase_price_str == "0" or purchase_price_str == "0.00":
+				# Log diagnostic information
+				frappe.log_error(
+					f"Item Code: {item_code}\n"
+					f"Purchase Price from EGIS: {repr(purchase_price_str)}\n"
+					f"Full Price Info: {json.dumps(price_info, indent=2, default=str)}",
+					"EGIS Sales Order Price Update - Zero/Empty Price"
+				)
+
+				# Determine reason
+				if purchase_price_str == "" or not purchase_price_str:
+					reason = "Price not available in EGIS (empty price field)"
+				else:
+					reason = f"Price is zero in EGIS (cannot use zero price)"
+
+				failed_items.append({
+					"item_code": item_code,
+					"reason": reason
+				})
+				continue
+
+			# Convert price to float
+			new_rate = flt(purchase_price_str)
+
+			# Double-check the converted price is valid
+			if not new_rate or new_rate <= 0:
+				frappe.log_error(
+					f"Item Code: {item_code}\n"
+					f"Purchase Price String: {repr(purchase_price_str)}\n"
+					f"After flt() conversion: {new_rate}\n"
+					f"Full Price Info: {json.dumps(price_info, indent=2, default=str)}",
+					"EGIS Sales Order Price Update - Invalid Price After Conversion"
+				)
+				failed_items.append({
+					"item_code": item_code,
+					"reason": f"Invalid price after conversion: {purchase_price_str} -> {new_rate}"
+				})
+				continue
+
+			# All validations passed - update the rate in Sales Order
+			item_row = item_info["row"]
+			old_rate = item_row.rate
+
+			# Clear any margins to ensure rate equals price_list_rate
+			item_row.margin_type = None
+			item_row.margin_rate_or_amount = 0
+			item_row.discount_percentage = 0
+			item_row.discount_amount = 0
+
+			# Update all rate-related fields
+			item_row.price_list_rate = new_rate
+			item_row.rate = new_rate
+			item_row.amount = new_rate * item_row.qty
+			item_row.net_rate = new_rate
+			item_row.net_amount = new_rate * item_row.qty
+
+			# Also update base currency fields if exchange rate exists
+			if hasattr(item_row, 'conversion_factor') and item_row.conversion_factor:
+				item_row.base_rate = new_rate * item_row.conversion_factor
+				item_row.base_amount = item_row.amount * item_row.conversion_factor
+				item_row.base_net_rate = new_rate * item_row.conversion_factor
+				item_row.base_net_amount = item_row.net_amount * item_row.conversion_factor
+
+			updated_items.append({
+				"item_code": item_code,
+				"old_rate": old_rate,
+				"new_rate": new_rate
+			})
 
 		except Exception as e:
+			frappe.log_error(
+				f"Item Code: {item_code}\n"
+				f"Exception: {str(e)}\n"
+				f"Full Traceback: {frappe.get_traceback()}",
+				"EGIS Sales Order Price Update - Exception"
+			)
 			failed_items.append({
 				"item_code": item_code,
-				"reason": str(e)
+				"reason": f"Error: {str(e)}"
 			})
 
 	if updated_items:
@@ -134,11 +190,17 @@ def get_egis_item_price(item_code, egis_settings):
 	endpoint = f"{base_url}/{component}/searchQuery"
 
 	# Build XML request to search by item code (ProprietaryProductNumber)
+	# Filter only active and stocked items to avoid updating prices for discontinued items
+	search_options = {
+		'OnlyActive': True,  # Only get active items
+		'OnlyStocked': True  # Only get stocked items
+	}
+
 	xml_payload = build_search_query_xml(
 		egis_settings.user,
 		egis_settings.get_password("password"),
 		item_code,  # Search for exact item code
-		{},  # No additional search options
+		search_options,  # Filter by active and stocked status
 		1  # Start row
 	)
 

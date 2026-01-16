@@ -29,7 +29,7 @@
    "label": "Sandbox"
   },
   {
-   "description": "Should be an URL like https://rest.egis-online.de/1.1/",
+   "description": "https://www.egis-online.de/cgi-bin/WebObjects/EBC.woa/wa",
    "fieldname": "url",
    "fieldtype": "Data",
    "label": "URL"
@@ -50,33 +50,35 @@
    "label": "Item Import Settings"
   },
   {
+   "description": "Price list to use when importing items for selling (e.g., 'Standard Selling' or 'Standard-Verkauf'). This price list must exist in your system.",
    "fieldname": "default_selling_price_list",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Default Selling Price List",
    "options": "Price List",
-   "reqd": 1,
-   "description": "Price list to use when importing items for selling (e.g., 'Standard Selling' or 'Standard-Verkauf'). This price list must exist in your system."
+   "reqd": 1
   },
   {
+   "description": "Optional price list to store EGIS recommended retail prices for reference. Leave empty if not needed.",
    "fieldname": "retail_price_list",
    "fieldtype": "Link",
    "label": "Retail Price List (Optional)",
-   "options": "Price List",
-   "description": "Optional price list to store EGIS recommended retail prices for reference. Leave empty if not needed."
+   "options": "Price List"
   },
   {
+   "description": "Item group for all imported EGIS items (e.g., 'EGIS'). All items imported from EGIS will be assigned to this item group.",
    "fieldname": "parent_item_group",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Item Group",
    "options": "Item Group",
-   "reqd": 1,
-   "description": "Item group for all imported EGIS items (e.g., 'EGIS'). All items imported from EGIS will be assigned to this item group."
+   "reqd": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-04-18 15:40:17.893646",
+ "modified": "2026-01-15 19:50:15.207722",
  "modified_by": "Administrator",
  "module": "EGIS Integration",
  "name": "EGIS Settings",
@@ -94,5 +96,6 @@
   }
  ],
  "sort_field": "modified",
- "sort_order": "DESC"
+ "sort_order": "DESC",
+ "states": []
 }

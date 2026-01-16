@@ -41,7 +41,19 @@ frappe.ui.form.on('EGIS Search Query', {
 					// Clear previous results before adding new ones
 					frm.clear_table('response');
 
-					response.Body.Item.forEach(item => {
+					// Apply client-side price filtering if min/max price specified
+					let filtered_items = response.Body.Item;
+					if (frm.doc.min_price || frm.doc.max_price) {
+						let min = frm.doc.min_price ? parseFloat(frm.doc.min_price) : 0;
+						let max = frm.doc.max_price ? parseFloat(frm.doc.max_price) : Infinity;
+
+						filtered_items = response.Body.Item.filter(item => {
+							let price = parseFloat(item.UnitPrice.PurchasePrice);
+							return price >= min && price <= max;
+						});
+					}
+
+					filtered_items.forEach(item => {
 						var new_row = frm.add_child('response');
 						new_row.item_exists = item.item_exists
 						new_row.proprietary_product_number = item.ProductIdentification.ProprietaryProductNumber
@@ -61,7 +73,7 @@ frappe.ui.form.on('EGIS Search Query', {
 
 					// Show success message with count
 					frappe.show_alert({
-						message: __('Found {0} items', [response.Body.Item.length]),
+						message: __('Found {0} items', [filtered_items.length]),
 						indicator: 'green'
 					}, 5);
 				}
@@ -79,14 +91,22 @@ frappe.ui.form.on('EGIS Search Query', {
 			return;
 		}
 
+		// Filter only checked items
+		let items_to_import = frm.doc.response.filter(item => item.__checked === 1);
+
+		if (items_to_import.length === 0) {
+			frappe.msgprint(__('No items selected. Please check the items you want to import.'), __('No Selection'));
+			return;
+		}
+
 		// Show loading indicator
-		let item_count = frm.doc.response.length;
+		let item_count = items_to_import.length;
 		frappe.dom.freeze(__('Importing {0} item(s) from EGIS, please wait...', [item_count]));
 
 		frappe.call({
 			method: "egis_integration.egis_integration.doctype.egis_search_query.egis_search_query.import_items",
 			args: {
-				items: frm.doc.response
+				items: items_to_import
 			},
 			callback: function (r){
 				frappe.dom.unfreeze();

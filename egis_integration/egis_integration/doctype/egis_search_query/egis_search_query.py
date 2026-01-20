@@ -227,12 +227,21 @@ def parse_search_response_xml(xml_response):
 		frappe.log_error(f"XML Parse Error: {str(e)}\nResponse: {xml_response}", "EGIS XML Parse Error")
 		return {'error': True, 'ErrorMessage': 'Invalid XML response', 'ErrorDescription': str(e)}
 
-def build_product_detail_xml(username, password, product_number):
-	"""Build XML document for ProductDetail query to get full description"""
-	root = ET.Element('ProductDetail')
+def build_product_specification_xml(username, password, product_number):
+	"""Build XML document for ProductSpecificationQuery to get full description
+
+	According to EGIS EBC documentation, this is the correct API for getting
+	product descriptions including:
+	- ShortDesc (from CNET or ICECAT)
+	- ShortSummaryDescription
+	- LongSummaryDescription
+	- MarketingText
+	- Feature specifications
+	"""
+	root = ET.Element('ProductSpecificationQuery')
 	root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
-	root.set('xmlns', 'http://www.egis-online.de/EBC/schema/ProductDetail')
-	root.set('xsi:schemaLocation', 'http://www.egis-online.de/EBC/schema/ProductDetail ProductDetail.xsd')
+	root.set('xmlns', 'http://www.egis-online.de/EBC/schema/ProductSpecificationQuery')
+	root.set('xsi:schemaLocation', 'http://www.egis-online.de/EBC/schema/ProductSpecificationQuery ProductSpecificationQuery.xsd')
 
 	# Transaction Header
 	header = ET.SubElement(root, 'TransactionHeader')
@@ -242,15 +251,25 @@ def build_product_detail_xml(username, password, product_number):
 	ET.SubElement(header, 'Login').text = username
 	ET.SubElement(header, 'Password').text = password
 
-	# Query with product number
-	query_elem = ET.SubElement(root, 'Query')
-	ET.SubElement(query_elem, 'ProprietaryProductNumber').text = product_number
+	# ProductSpecification > Query > ProductReference > ProprietaryProductIdentifier > ProprietaryProductNumber
+	spec_elem = ET.SubElement(root, 'ProductSpecification')
+	query_elem = ET.SubElement(spec_elem, 'Query')
+	prod_ref = ET.SubElement(query_elem, 'ProductReference')
+	prop_id = ET.SubElement(prod_ref, 'ProprietaryProductIdentifier')
+	ET.SubElement(prop_id, 'ProprietaryProductNumber').text = product_number
 
 	xml_str = ET.tostring(root, encoding='utf-8', method='xml')
 	return xml_str.decode('utf-8')
 
 def fetch_product_detail(product_number):
-	"""Fetch full product details including long description from EGIS"""
+	"""Fetch full product details including long description from EGIS
+
+	Uses the productSpecificationQuery API which returns:
+	- LongSummaryDescription (preferred)
+	- ShortSummaryDescription
+	- ShortDesc (from CNET or ICECAT)
+	- MarketingText
+	"""
 	try:
 		egis_settings = frappe.get_doc("EGIS Settings")
 		base_url = egis_settings.url.rstrip('/')
@@ -261,9 +280,10 @@ def fetch_product_detail(product_number):
 		else:
 			component = "ProductMaster"
 
-		endpoint = f"{base_url}/{component}/productDetail"
+		# Use productSpecificationQuery endpoint (correct API per EGIS documentation)
+		endpoint = f"{base_url}/{component}/productSpecificationQuery"
 
-		xml_payload = build_product_detail_xml(
+		xml_payload = build_product_specification_xml(
 			egis_settings.user,
 			egis_settings.get_password("password"),
 			product_number
@@ -273,31 +293,63 @@ def fetch_product_detail(product_number):
 		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30)
 
 		if response.status_code == 200:
-			# Parse the response to extract long description
+			# Check for error response
+			if 'Exception' in response.text or 'ErrorNumber' in response.text:
+				frappe.log_error(
+					f"EGIS returned error for {product_number}:\n{response.text[:500]}",
+					"EGIS ProductSpecification Error"
+				)
+				return None
+
+			# Parse the response to extract descriptions
 			root = ET.fromstring(response.text)
-			ns = {'ns': 'http://www.egis-online.de/EBC/schema/ProductDetailResponse'}
+			ns = {'ns': 'http://www.egis-online.de/EBC/schema/ProductSpecificationQueryResponse'}
 
-			# Look for LongDescription field
-			long_desc = root.find('.//ns:LongDescription', ns)
-			if long_desc is not None and long_desc.text:
-				return long_desc.text
+			# Try to find descriptions in order of preference:
+			# 1. LongSummaryDescription (best for detailed description)
+			# 2. MarketingText (marketing content from CNET)
+			# 3. ShortSummaryDescription
+			# 4. ShortDesc (short description from CNET or ICECAT)
 
-			# Fallback to Description if LongDescription not available
-			desc = root.find('.//ns:Description', ns)
-			if desc is not None and desc.text:
-				return desc.text
+			# With namespace
+			long_summary = root.find('.//ns:LongSummaryDescription', ns)
+			if long_summary is not None and long_summary.text and long_summary.text.strip():
+				return long_summary.text.strip()
 
-			# Try without namespace
-			long_desc_no_ns = root.find('.//LongDescription')
-			if long_desc_no_ns is not None and long_desc_no_ns.text:
-				return long_desc_no_ns.text
+			marketing_text = root.find('.//ns:MarketingText', ns)
+			if marketing_text is not None and marketing_text.text and marketing_text.text.strip():
+				return marketing_text.text.strip()
 
-			desc_no_ns = root.find('.//Description')
-			if desc_no_ns is not None and desc_no_ns.text:
-				return desc_no_ns.text
+			short_summary = root.find('.//ns:ShortSummaryDescription', ns)
+			if short_summary is not None and short_summary.text and short_summary.text.strip():
+				return short_summary.text.strip()
 
+			short_desc = root.find('.//ns:ShortDesc', ns)
+			if short_desc is not None and short_desc.text and short_desc.text.strip():
+				return short_desc.text.strip()
+
+			# Try without namespace (fallback)
+			long_summary_no_ns = root.find('.//LongSummaryDescription')
+			if long_summary_no_ns is not None and long_summary_no_ns.text and long_summary_no_ns.text.strip():
+				return long_summary_no_ns.text.strip()
+
+			marketing_text_no_ns = root.find('.//MarketingText')
+			if marketing_text_no_ns is not None and marketing_text_no_ns.text and marketing_text_no_ns.text.strip():
+				return marketing_text_no_ns.text.strip()
+
+			short_summary_no_ns = root.find('.//ShortSummaryDescription')
+			if short_summary_no_ns is not None and short_summary_no_ns.text and short_summary_no_ns.text.strip():
+				return short_summary_no_ns.text.strip()
+
+			short_desc_no_ns = root.find('.//ShortDesc')
+			if short_desc_no_ns is not None and short_desc_no_ns.text and short_desc_no_ns.text.strip():
+				return short_desc_no_ns.text.strip()
+
+	except ET.ParseError as e:
+		frappe.log_error(f"XML Parse Error for {product_number}: {str(e)}", "EGIS ProductSpecification Parse Error")
+		return None
 	except Exception as e:
-		frappe.log_error(f"Error fetching ProductDetail for {product_number}: {str(e)}", "EGIS ProductDetail Error")
+		frappe.log_error(f"Error fetching ProductSpecification for {product_number}: {str(e)}", "EGIS ProductSpecification Error")
 		return None
 
 	return None

@@ -4,10 +4,6 @@
 import frappe
 import json
 from frappe.utils import flt
-from egis_integration.egis_integration.doctype.egis_search_query.egis_search_query import (
-	build_search_query_xml,
-	parse_search_response_xml
-)
 import requests
 
 
@@ -28,10 +24,11 @@ def update_egis_prices_in_sales_order(sales_order_name):
 	egis_settings = frappe.get_doc("EGIS Settings")
 
 	# Find all EGIS items in the Sales Order
-	# Check is_egis_item from Item master (not from Sales Order Item row)
+	# is_egis_item is fetched from Item master via fetch_from in Custom Field
+	# But also check Item master as fallback for older Sales Orders
 	egis_items = []
 	for item in sales_order.items:
-		is_egis = frappe.db.get_value("Item", item.item_code, "is_egis_item")
+		is_egis = item.get("is_egis_item") or frappe.db.get_value("Item", item.item_code, "is_egis_item")
 		if is_egis:
 			egis_items.append({
 				"idx": item.idx,
@@ -177,9 +174,121 @@ def update_egis_prices_in_sales_order(sales_order_name):
 		}
 
 
+def build_bestprice_query_xml(username, password, product_number):
+	"""
+	Build XML document for BestpriceQuery to get the best price for a specific item.
+
+	According to EGIS EBC documentation, bestpriceQuery accepts ProprietaryProductNumber
+	and returns the best available price from distributors.
+	"""
+	import xml.etree.ElementTree as ET
+
+	root = ET.Element('BestpriceQuery')
+	root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+	root.set('xmlns', 'http://www.egis-online.de/EBC/schema/BestpriceQuery')
+	root.set('xsi:schemaLocation', 'http://www.egis-online.de/EBC/schema/BestpriceQuery BestpriceQuery.xsd')
+
+	# Transaction Header
+	header = ET.SubElement(root, 'TransactionHeader')
+	ET.SubElement(header, 'VersionId').text = '1.00'
+	ET.SubElement(header, 'GenerationDateTime').text = frappe.utils.now()
+	ET.SubElement(header, 'ERP').text = 'ERPNext'
+	ET.SubElement(header, 'Login').text = username
+	ET.SubElement(header, 'Password').text = password
+
+	# Bestprice > Query > ProductReference > ProprietaryProductIdentifier > ProprietaryProductNumber
+	bestprice_elem = ET.SubElement(root, 'Bestprice')
+	query_elem = ET.SubElement(bestprice_elem, 'Query')
+	prod_ref = ET.SubElement(query_elem, 'ProductReference')
+	prop_id = ET.SubElement(prod_ref, 'ProprietaryProductIdentifier')
+	ET.SubElement(prop_id, 'ProprietaryProductNumber').text = product_number
+
+	# Include items with zero stock (so we can still get prices for out-of-stock items)
+	ET.SubElement(query_elem, 'IncludeZeroStock').text = 'true'
+
+	xml_str = ET.tostring(root, encoding='utf-8', method='xml')
+	return xml_str.decode('utf-8')
+
+
+def parse_bestprice_response_xml(xml_response):
+	"""
+	Parse XML response from BestpriceQuery.
+	Returns price info or error details.
+	"""
+	import xml.etree.ElementTree as ET
+
+	try:
+		root = ET.fromstring(xml_response)
+		ns = {'ns': 'http://www.egis-online.de/EBC/schema/BestpriceQueryResponse'}
+
+		# Check for errors in TransactionHeader
+		header = root.find('ns:TransactionHeader', ns)
+		if header is not None:
+			exception = header.find('ns:Exception', ns)
+			if exception is not None:
+				error_num = exception.find('ns:ErrorNumber', ns)
+				error_msg = exception.find('ns:ErrorMessage', ns)
+				error_desc = exception.find('ns:ErrorDescription', ns)
+				return {
+					'error': True,
+					'ErrorNumber': error_num.text if error_num is not None else '',
+					'ErrorMessage': error_msg.text if error_msg is not None else '',
+					'ErrorDescription': error_desc.text if error_desc is not None else ''
+				}
+
+		# Parse successful response - find Bestprice element
+		bestprice = root.find('ns:Bestprice', ns)
+		if bestprice is None:
+			# Try without namespace
+			bestprice = root.find('.//Bestprice')
+
+		if bestprice is not None:
+			# Get Body > DistributorProductItem > UnitPrice
+			body = bestprice.find('ns:Body', ns)
+			if body is None:
+				body = bestprice.find('Body')
+
+			if body is not None:
+				dist_item = body.find('ns:DistributorProductItem', ns)
+				if dist_item is None:
+					dist_item = body.find('DistributorProductItem')
+
+				if dist_item is not None:
+					unit_price = dist_item.find('ns:UnitPrice', ns)
+					if unit_price is None:
+						unit_price = dist_item.find('UnitPrice')
+
+					if unit_price is not None:
+						# Extract prices
+						purchase_price = unit_price.find('ns:PurchasePrice', ns)
+						if purchase_price is None:
+							purchase_price = unit_price.find('PurchasePrice')
+
+						currency = unit_price.find('ns:CurrencyCode', ns)
+						if currency is None:
+							currency = unit_price.find('CurrencyCode')
+
+						retail_price = unit_price.find('ns:RetailPrice', ns)
+						if retail_price is None:
+							retail_price = unit_price.find('RetailPrice')
+
+						return {
+							'purchase_price': purchase_price.text if purchase_price is not None else None,
+							'currency': currency.text if currency is not None else 'EUR',
+							'retail_price': retail_price.text if retail_price is not None else None
+						}
+
+		return None
+
+	except ET.ParseError as e:
+		frappe.log_error(f"XML Parse Error: {str(e)}\nResponse: {xml_response}", "EGIS Bestprice XML Parse Error")
+		return {'error': True, 'ErrorMessage': 'Invalid XML response', 'ErrorDescription': str(e)}
+
+
 def get_egis_item_price(item_code, egis_settings):
 	"""
-	Query EGIS API to get the latest price for a specific item
+	Query EGIS API to get the latest best price for a specific item.
+	Uses bestpriceQuery API which is designed for single-item price lookup.
 	"""
 	# Build endpoint URL
 	base_url = egis_settings.url.rstrip('/')
@@ -189,19 +298,13 @@ def get_egis_item_price(item_code, egis_settings):
 	else:
 		component = "ProductMaster"
 
-	endpoint = f"{base_url}/{component}/searchQuery"
+	endpoint = f"{base_url}/{component}/bestpriceQuery"
 
-	# Build XML request to search by item code (ProprietaryProductNumber)
-	# Don't filter by active/stocked - we want to get prices even for items
-	# that may be temporarily out of stock or inactive
-	search_options = {}
-
-	xml_payload = build_search_query_xml(
+	# Build XML request for bestpriceQuery
+	xml_payload = build_bestprice_query_xml(
 		egis_settings.user,
 		egis_settings.get_password("password"),
-		item_code,  # Search for exact item code
-		search_options,  # Filter by active and stocked status
-		1  # Start row
+		item_code
 	)
 
 	# Send request
@@ -217,38 +320,23 @@ def get_egis_item_price(item_code, egis_settings):
 
 		if response.status_code != 200:
 			frappe.log_error(
-				f"EGIS API Error for item {item_code}: HTTP {response.status_code}",
+				f"EGIS API Error for item {item_code}: HTTP {response.status_code}\nResponse: {response.text[:500]}",
 				"EGIS Price Update Error"
 			)
 			return None
 
 		# Parse response
-		response_data = parse_search_response_xml(response.text)
+		result = parse_bestprice_response_xml(response.text)
 
 		# Check for errors
-		if response_data.get('error'):
+		if result and result.get('error'):
 			frappe.log_error(
-				f"EGIS API Error for item {item_code}: {response_data.get('ErrorMessage')}",
+				f"EGIS API Error for item {item_code}: {result.get('ErrorNumber')} - {result.get('ErrorMessage')}\n{result.get('ErrorDescription')}",
 				"EGIS Price Update Error"
 			)
 			return None
 
-		# Get the first item from results
-		if response_data.get('Body') and response_data['Body'].get('Item'):
-			items = response_data['Body']['Item']
-
-			# Find exact match by item code
-			for item in items:
-				prod_id = item.get('ProductIdentification', {})
-				if prod_id.get('ProprietaryProductNumber') == item_code:
-					unit_price = item.get('UnitPrice', {})
-					return {
-						"purchase_price": unit_price.get('PurchasePrice'),
-						"currency": unit_price.get('CurrencyCode'),
-						"retail_price": unit_price.get('RecommendedRetailPrice')
-					}
-
-		return None
+		return result
 
 	except requests.exceptions.Timeout:
 		frappe.log_error(

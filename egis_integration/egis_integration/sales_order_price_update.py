@@ -28,9 +28,11 @@ def update_egis_prices_in_sales_order(sales_order_name):
 	egis_settings = frappe.get_doc("EGIS Settings")
 
 	# Find all EGIS items in the Sales Order
+	# Check is_egis_item from Item master (not from Sales Order Item row)
 	egis_items = []
 	for item in sales_order.items:
-		if item.get("is_egis_item"):
+		is_egis = frappe.db.get_value("Item", item.item_code, "is_egis_item")
+		if is_egis:
 			egis_items.append({
 				"idx": item.idx,
 				"item_code": item.item_code,
@@ -190,11 +192,9 @@ def get_egis_item_price(item_code, egis_settings):
 	endpoint = f"{base_url}/{component}/searchQuery"
 
 	# Build XML request to search by item code (ProprietaryProductNumber)
-	# Filter only active and stocked items to avoid updating prices for discontinued items
-	search_options = {
-		'OnlyActive': True,  # Only get active items
-		'OnlyStocked': True  # Only get stocked items
-	}
+	# Don't filter by active/stocked - we want to get prices even for items
+	# that may be temporarily out of stock or inactive
+	search_options = {}
 
 	xml_payload = build_search_query_xml(
 		egis_settings.user,

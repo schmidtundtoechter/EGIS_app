@@ -262,13 +262,14 @@ def build_product_specification_xml(username, password, product_number):
 	return xml_str.decode('utf-8')
 
 def fetch_product_detail(product_number):
-	"""Fetch full product details including long description from EGIS
+	"""Fetch full product details including long description and Features from EGIS
 
 	Uses the productSpecificationQuery API which returns:
 	- LongSummaryDescription (preferred)
 	- ShortSummaryDescription
 	- ShortDesc (from CNET or ICECAT)
 	- MarketingText
+	- Feature (multiple) with FeatureGroup, Key, Value
 	"""
 	try:
 		egis_settings = frappe.get_doc("EGIS Settings")
@@ -305,45 +306,97 @@ def fetch_product_detail(product_number):
 			root = ET.fromstring(response.text)
 			ns = {'ns': 'http://www.egis-online.de/EBC/schema/ProductSpecificationQueryResponse'}
 
-			# Try to find descriptions in order of preference:
-			# 1. LongSummaryDescription (best for detailed description)
-			# 2. MarketingText (marketing content from CNET)
-			# 3. ShortSummaryDescription
-			# 4. ShortDesc (short description from CNET or ICECAT)
+			description_parts = []
 
-			# With namespace
+			# 1. First add any text descriptions (LongSummaryDescription, MarketingText, etc.)
 			long_summary = root.find('.//ns:LongSummaryDescription', ns)
+			if long_summary is None:
+				long_summary = root.find('.//LongSummaryDescription')
 			if long_summary is not None and long_summary.text and long_summary.text.strip():
-				return long_summary.text.strip()
+				# Format the description with HTML line breaks after each sentence
+				# EGIS returns specs like "Name. Key1: Val1, Key2: Val2. Key3: Val3."
+				formatted_desc = long_summary.text.strip()
+				# Split on ". " and rejoin with <br> for HTML display
+				sentences = formatted_desc.split('. ')
+				if len(sentences) > 1:
+					formatted_desc = '.<br>'.join(sentences)
+					# Fix the last sentence if it didn't end with a period
+					if not formatted_desc.endswith('.'):
+						formatted_desc += '.'
+				description_parts.append(formatted_desc)
 
 			marketing_text = root.find('.//ns:MarketingText', ns)
+			if marketing_text is None:
+				marketing_text = root.find('.//MarketingText')
 			if marketing_text is not None and marketing_text.text and marketing_text.text.strip():
-				return marketing_text.text.strip()
+				# Format with HTML line breaks
+				formatted_marketing = marketing_text.text.strip()
+				sentences = formatted_marketing.split('. ')
+				if len(sentences) > 1:
+					formatted_marketing = '.<br>'.join(sentences)
+					if not formatted_marketing.endswith('.'):
+						formatted_marketing += '.'
+				# Only add if different from long_summary
+				if not description_parts or formatted_marketing != description_parts[0]:
+					description_parts.append(formatted_marketing)
 
+			# 2. Extract all Feature elements and format as "Key:\nValue"
+			# Skip certain fields that are not useful for product description
+			skip_keys = [
+				'url', 'image', 'bild', 'picture', 'foto', 'photo',
+				'link', 'href', 'datasheet', 'datenblatt'
+			]
+
+			features = root.findall('.//ns:Feature', ns)
+			if not features:
+				features = root.findall('.//Feature')
+
+			feature_texts = []
+			for feature in features:
+				key_elem = feature.find('ns:Key', ns)
+				if key_elem is None:
+					key_elem = feature.find('Key')
+
+				value_elem = feature.find('ns:Value', ns)
+				if value_elem is None:
+					value_elem = feature.find('Value')
+
+				if key_elem is not None and value_elem is not None:
+					key = key_elem.text.strip() if key_elem.text else ''
+					value = value_elem.text.strip() if value_elem.text else ''
+
+					# Skip if key contains any of the skip words (case-insensitive)
+					if key and value:
+						key_lower = key.lower()
+						value_lower = value.lower()
+						should_skip = False
+						for skip_word in skip_keys:
+							if skip_word in key_lower or (value_lower.startswith('http') and 'image' in value_lower):
+								should_skip = True
+								break
+
+						if not should_skip:
+							feature_texts.append(f"<b>{key}:</b> {value}")
+
+			# 3. Combine description and features
+			if feature_texts:
+				description_parts.append("<br>".join(feature_texts))
+
+			if description_parts:
+				return "<br><br>".join(description_parts)
+
+			# Fallback to short descriptions if no long description or features
 			short_summary = root.find('.//ns:ShortSummaryDescription', ns)
+			if short_summary is None:
+				short_summary = root.find('.//ShortSummaryDescription')
 			if short_summary is not None and short_summary.text and short_summary.text.strip():
 				return short_summary.text.strip()
 
 			short_desc = root.find('.//ns:ShortDesc', ns)
+			if short_desc is None:
+				short_desc = root.find('.//ShortDesc')
 			if short_desc is not None and short_desc.text and short_desc.text.strip():
 				return short_desc.text.strip()
-
-			# Try without namespace (fallback)
-			long_summary_no_ns = root.find('.//LongSummaryDescription')
-			if long_summary_no_ns is not None and long_summary_no_ns.text and long_summary_no_ns.text.strip():
-				return long_summary_no_ns.text.strip()
-
-			marketing_text_no_ns = root.find('.//MarketingText')
-			if marketing_text_no_ns is not None and marketing_text_no_ns.text and marketing_text_no_ns.text.strip():
-				return marketing_text_no_ns.text.strip()
-
-			short_summary_no_ns = root.find('.//ShortSummaryDescription')
-			if short_summary_no_ns is not None and short_summary_no_ns.text and short_summary_no_ns.text.strip():
-				return short_summary_no_ns.text.strip()
-
-			short_desc_no_ns = root.find('.//ShortDesc')
-			if short_desc_no_ns is not None and short_desc_no_ns.text and short_desc_no_ns.text.strip():
-				return short_desc_no_ns.text.strip()
 
 	except ET.ParseError as e:
 		frappe.log_error(f"XML Parse Error for {product_number}: {str(e)}", "EGIS ProductSpecification Parse Error")
@@ -501,8 +554,9 @@ def import_items(items):
 		if item.get("purchase_price"):
 			item_doc.standard_rate = flt(item.get("purchase_price"))
 		item_doc.default_currency = item.get("currency_code")
-		# Mark as EGIS item
+		# Mark as EGIS item and store EGIS product number for API queries
 		item_doc.is_egis_item = 1
+		item_doc.custom_egis_product_number = product_number
 		item_doc.save()
 
 		# Create Item Price for selling (Quotations/Sales Orders) using purchase price
@@ -597,6 +651,11 @@ def update_item(item, egis_settings):
 	# Mark as EGIS item if not already marked
 	if not item_erpnext.is_egis_item:
 		item_erpnext.is_egis_item = 1
+		changed = True
+
+	# Store EGIS product number for API queries (in case item_code is different)
+	if item_erpnext.custom_egis_product_number != product_number:
+		item_erpnext.custom_egis_product_number = product_number
 		changed = True
 
 	if changed:

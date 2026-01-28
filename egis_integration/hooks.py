@@ -192,6 +192,7 @@ fixtures = [
     {"dt": "Custom Field", "filters": [
         [
             "name", "in", [
+                "Item-custom_egis_product_number",
 				"Item-egis_data",
 				"Item-manufacturer_product_number",
                 "Item-global_product_number",

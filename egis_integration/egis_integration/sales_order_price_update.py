@@ -28,11 +28,17 @@ def update_egis_prices_in_sales_order(sales_order_name):
 	# But also check Item master as fallback for older Sales Orders
 	egis_items = []
 	for item in sales_order.items:
-		is_egis = item.get("is_egis_item") or frappe.db.get_value("Item", item.item_code, "is_egis_item")
+		# Get Item master data for EGIS check and product number
+		item_data = frappe.db.get_value("Item", item.item_code,
+			["is_egis_item", "custom_egis_product_number"], as_dict=True)
+		is_egis = item.get("is_egis_item") or (item_data and item_data.get("is_egis_item"))
 		if is_egis:
+			# Use custom_egis_product_number for EGIS API queries (falls back to item_code if not set)
+			egis_product_number = (item_data and item_data.get("custom_egis_product_number")) or item.item_code
 			egis_items.append({
 				"idx": item.idx,
 				"item_code": item.item_code,
+				"egis_product_number": egis_product_number,
 				"qty": item.qty,
 				"row": item
 			})
@@ -49,23 +55,25 @@ def update_egis_prices_in_sales_order(sales_order_name):
 
 	for item_info in egis_items:
 		item_code = item_info["item_code"]
+		egis_product_number = item_info["egis_product_number"]
 
 		try:
-			# Search for the item in EGIS by item code
-			price_info = get_egis_item_price(item_code, egis_settings)
+			# Search for the item in EGIS by EGIS product number (ProprietaryProductNumber)
+			price_info = get_egis_item_price(egis_product_number, egis_settings)
 
 			# Validate price info
 			if not price_info:
 				# Item not found in EGIS at all
 				frappe.log_error(
 					f"Item Code: {item_code}\n"
+					f"EGIS Product Number: {egis_product_number}\n"
 					f"Reason: Item not found in EGIS search results\n"
 					f"This usually means the item is discontinued or no longer available.",
 					"EGIS Sales Order Price Update - Item Not Found"
 				)
 				failed_items.append({
 					"item_code": item_code,
-					"reason": "Item not found in EGIS catalog (may be discontinued)"
+					"reason": f"Item not found in EGIS (searched: {egis_product_number})"
 				})
 				continue
 

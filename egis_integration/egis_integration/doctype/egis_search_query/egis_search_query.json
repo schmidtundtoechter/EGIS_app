@@ -6,6 +6,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "import_short_description_only",
   "request_section",
   "search_term",
   "only_active",
@@ -25,6 +26,13 @@
   "import_items"
  ],
  "fields": [
+  {
+   "default": "1",
+   "fieldname": "import_short_description_only",
+   "fieldtype": "Check",
+   "label": "Import only short product descriptions",
+   "description": "When enabled, uses only the short description from search results (truncated at weight specification). When disabled, fetches detailed specifications from EGIS API (slower but more detailed)."
+  },
   {
    "fieldname": "request_section",
    "fieldtype": "Section Break",
@@ -125,7 +133,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-04-19 15:04:00.558409",
+ "modified": "2026-02-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "EGIS Integration",
  "name": "EGIS Search Query",

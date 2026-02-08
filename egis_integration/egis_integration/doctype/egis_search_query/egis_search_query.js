@@ -106,18 +106,74 @@ frappe.ui.form.on('EGIS Search Query', {
 		frappe.call({
 			method: "egis_integration.egis_integration.doctype.egis_search_query.egis_search_query.import_items",
 			args: {
-				items: items_to_import
+				items: items_to_import,
+				import_short_description_only: frm.doc.import_short_description_only || 1
 			},
 			callback: function (r){
 				frappe.dom.unfreeze();
 				console.log("response", r.message);
 
-				frappe.show_alert({
-					message: __('Successfully imported {0} item(s)', [item_count]),
-					indicator: 'green'
-				}, 7);
+				// Parse the response
+				let result = r.message;
+				let imported = result.imported || 0;
+				let updated = result.updated || 0;
+				let duplicates_skipped = result.duplicates_skipped || 0;
+				let duplicate_details = result.duplicate_details || [];
 
-				frappe.msgprint(__('Item importation completed. {0} items have been imported to your system.', [item_count]), __('Success'));
+				// Show success alert for imported/updated items
+				let success_messages = [];
+				if (imported > 0) {
+					success_messages.push(`${imported} new item(s) imported`);
+				}
+				if (updated > 0) {
+					success_messages.push(`${updated} existing item(s) updated`);
+				}
+
+				if (success_messages.length > 0) {
+					frappe.show_alert({
+						message: __(success_messages.join(', ')),
+						indicator: 'green'
+					}, 7);
+				}
+
+				// Show duplicate warning if any
+				if (duplicates_skipped > 0) {
+					let duplicate_list_html = '<table class="table table-bordered" style="margin-top: 10px;">';
+					duplicate_list_html += '<thead><tr>';
+					duplicate_list_html += '<th>Manufacturer Product #</th>';
+					duplicate_list_html += '<th>Description</th>';
+					duplicate_list_html += '<th>Existing Item</th>';
+					duplicate_list_html += '</tr></thead><tbody>';
+
+					duplicate_details.forEach(function(dup) {
+						duplicate_list_html += '<tr>';
+						duplicate_list_html += `<td>${dup.manufacturer_product_number}</td>`;
+						duplicate_list_html += `<td>${dup.description || ''}</td>`;
+						duplicate_list_html += `<td><a href="/app/item/${dup.existing_item_code}" target="_blank">${dup.existing_item_code}</a></td>`;
+						duplicate_list_html += '</tr>';
+					});
+
+					duplicate_list_html += '</tbody></table>';
+
+					frappe.msgprint({
+						title: __('Duplicate Items Skipped'),
+						indicator: 'orange',
+						message: `<p><strong>${duplicates_skipped} item(s) were skipped because they already exist (matching Manufacturer Product Number):</strong></p>${duplicate_list_html}`
+					});
+				}
+
+				// Show final summary
+				let summary_parts = [];
+				if (imported > 0) summary_parts.push(`${imported} imported`);
+				if (updated > 0) summary_parts.push(`${updated} updated`);
+				if (duplicates_skipped > 0) summary_parts.push(`${duplicates_skipped} skipped as duplicates`);
+
+				if (summary_parts.length > 0) {
+					frappe.msgprint(
+						__('Import completed: {0}', [summary_parts.join(', ')]),
+						__('Import Summary')
+					);
+				}
 			},
 			error: function() {
 				frappe.dom.unfreeze();

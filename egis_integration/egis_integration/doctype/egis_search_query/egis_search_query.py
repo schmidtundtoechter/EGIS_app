@@ -407,6 +407,65 @@ def fetch_product_detail(product_number):
 
 	return None
 
+def extract_short_description(full_description):
+	"""Extract short description by finding and cutting after weight specification
+
+	Short description ends after the line containing "Gewicht:" (weight specification).
+	Everything after that line (advertising text, marketing copy) is removed.
+
+	Args:
+		full_description: Full product description string from EGIS API
+
+	Returns:
+		str: Truncated short description ending with weight line, or original if no weight found
+	"""
+	import re
+
+	if not full_description or not full_description.strip():
+		return full_description
+
+	description = full_description.strip()
+
+	# Look for the weight line (in German: "Gewicht:")
+	# This line typically looks like: "Gewicht: 1,84 kg." or "Gewicht: 1.84 kg"
+	# We want to include this line but remove everything after it
+
+	# Pattern to match the weight line with various formats
+	# Matches: "Gewicht: 1,84 kg" or "Gewicht: 1.84 kg." etc.
+	weight_line_pattern = r'Gewicht:\s*\d+[,.]?\d*\s*[kK][gG]\.?'
+
+	match = re.search(weight_line_pattern, description, re.IGNORECASE)
+
+	if match:
+		# Cut description at the end of the weight line
+		cut_position = match.end()
+
+		# If there's a period right after, include it
+		if cut_position < len(description) and description[cut_position] == '.':
+			cut_position += 1
+
+		short_desc = description[:cut_position].strip()
+
+		# Make sure we got something meaningful (at least 20 characters)
+		if len(short_desc) >= 20:
+			frappe.log_error(
+				f"Found weight specification at position {cut_position}\n"
+				f"Original length: {len(description)}\n"
+				f"Truncated length: {len(short_desc)}\n"
+				f"Result: {short_desc}",
+				"EGIS Short Description - Weight Found"
+			)
+			return short_desc
+
+	# Fallback: If no weight line found, return original description
+	# This handles products that might not have weight specifications
+	frappe.log_error(
+		f"No weight specification found in description\n"
+		f"Description: {description[:200]}...",
+		"EGIS Short Description - No Weight"
+	)
+	return description
+
 @frappe.whitelist()
 def make_request(search_term, search_options, start_row):
 	search_options = json.loads(search_options or '{}')
@@ -504,9 +563,12 @@ def make_request(search_term, search_options, start_row):
 	return json.dumps(response_data)
 
 @frappe.whitelist()
-def import_items(items):
+def import_items(items, import_short_description_only=1):
 	items = items.replace("&quot;", "'")
 	items = json.loads(items)
+
+	# Convert to int if it comes as string from JS
+	import_short_only = int(import_short_description_only) if import_short_description_only else 1
 
 	# Get EGIS settings for configurable values
 	egis_settings = frappe.get_doc("EGIS Settings")
@@ -526,17 +588,81 @@ def import_items(items):
 	if not frappe.db.exists("Item Group", egis_settings.parent_item_group):
 		frappe.throw(f"Item Group '{egis_settings.parent_item_group}' does not exist. Please create it first or select a different item group in EGIS Settings.", title="Item Group Not Found")
 
+	# Check for duplicates based on manufacturer_product_number
+	duplicates = []
+	items_to_import = []
+	items_to_update = []
+
 	for item in items:
+		manufacturer_pn = item.get("manufacturer_product_number")
+		proprietary_pn = item.get("proprietary_product_number")
+
+		# Check if manufacturer_product_number already exists (check this FIRST)
+		if manufacturer_pn and manufacturer_pn.strip():
+			existing_items = frappe.db.get_list("Item",
+				filters={"manufacturer_product_number": manufacturer_pn},
+				fields=["name", "item_name", "manufacturer_product_number"],
+				limit=1
+			)
+
+			if existing_items:
+				# Check if this is the same item (by item_code) being updated
+				if item.get("item_exists") and existing_items[0].name == proprietary_pn:
+					# Same EGIS Product Number + Same Manufacturer Number = UPDATE
+					items_to_update.append(item)
+					continue
+				else:
+					# Different EGIS Product Number + Same Manufacturer Number = SKIP (duplicate)
+					duplicates.append({
+						"egis_product_number": proprietary_pn,
+						"manufacturer_product_number": manufacturer_pn,
+						"description": item.get("proprietary_product_description"),
+						"existing_item_code": existing_items[0].name,
+						"existing_item_name": existing_items[0].item_name
+					})
+					continue
+
+		# Check if item already exists by ProprietaryProductNumber (for items without manufacturer number)
 		if item.get("item_exists"):
-			update_item(item, egis_settings)
+			items_to_update.append(item)
 			continue
 
-		# Fetch full long description from EGIS ProductDetail API
+		# No duplicate - safe to import
+		items_to_import.append(item)
+
+	# Process updates for existing items
+	for item in items_to_update:
+		update_item(item, egis_settings, import_short_only)
+
+	# Process new imports (non-duplicates)
+	for item in items_to_import:
+		# Get description based on user preference
 		product_number = item.get("proprietary_product_number")
+		short_description = item.get("proprietary_product_description")
+
+		# Always fetch full long description from EGIS ProductDetail API
 		long_description = fetch_product_detail(product_number)
 		if not long_description:
 			# Fallback to short description if long description not available
-			long_description = item.get("proprietary_product_description")
+			long_description = short_description
+
+		# Debug logging
+		frappe.log_error(
+			f"Product: {product_number}\n"
+			f"Checkbox value: {import_short_only}\n"
+			f"Long description from API (length): {len(long_description) if long_description else 0}\n",
+			"EGIS Import Debug"
+		)
+
+		if import_short_only and long_description:
+			# Truncate at weight specification (remove advertising text)
+			long_description = extract_short_description(long_description)
+			frappe.log_error(
+				f"After truncation (length): {len(long_description)}\n"
+				f"Result: {long_description[:200]}...",
+				"EGIS Import Debug - After Truncation"
+			)
+
 
 		brand = get_brand(item)
 		item_group = get_item_group(item, egis_settings)
@@ -598,6 +724,14 @@ def import_items(items):
 					# Update existing retail price
 					frappe.db.set_value("Item Price", existing_retail_price, "price_list_rate", flt(item.get("recommended_retail_price")))
 
+	# Return summary information
+	return {
+		"imported": len(items_to_import),
+		"updated": len(items_to_update),
+		"duplicates_skipped": len(duplicates),
+		"duplicate_details": duplicates
+	}
+
 def get_brand(item):
 	brand = item.get("manufacturer_name")
 	if not frappe.db.exists("Brand", brand):
@@ -614,16 +748,23 @@ def get_item_group(item, egis_settings):
 	# Use the configured item group from EGIS Settings for all items
 	return egis_settings.parent_item_group
 
-def update_item(item, egis_settings):
+def update_item(item, egis_settings, import_short_only=1):
 	item_erpnext = frappe.get_doc("Item", item.get("proprietary_product_number"))
 	changed = False
 
-	# Fetch full long description from EGIS ProductDetail API
+	# Get description based on user preference
 	product_number = item.get("proprietary_product_number")
+	short_description = item.get("proprietary_product_description")
+
+	# Always fetch full long description from EGIS ProductDetail API
 	long_description = fetch_product_detail(product_number)
 	if not long_description:
 		# Fallback to short description if long description not available
-		long_description = item.get("proprietary_product_description")
+		long_description = short_description
+
+	if import_short_only and long_description:
+		# Truncate at weight specification (remove advertising text)
+		long_description = extract_short_description(long_description)
 
 	if item_erpnext.item_name != item.get("proprietary_product_description"):
 		item_erpnext.item_name = item.get("proprietary_product_description")

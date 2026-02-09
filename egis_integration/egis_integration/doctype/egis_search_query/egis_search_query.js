@@ -107,7 +107,7 @@ frappe.ui.form.on('EGIS Search Query', {
 			method: "egis_integration.egis_integration.doctype.egis_search_query.egis_search_query.import_items",
 			args: {
 				items: items_to_import,
-				import_short_description_only: frm.doc.import_short_description_only || 1
+				import_short_description_only: frm.doc.import_short_description_only ? 1 : 0
 			},
 			callback: function (r){
 				frappe.dom.unfreeze();

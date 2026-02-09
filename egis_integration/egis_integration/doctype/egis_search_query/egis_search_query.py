@@ -408,16 +408,19 @@ def fetch_product_detail(product_number):
 	return None
 
 def extract_short_description(full_description):
-	"""Extract short description by finding and cutting after weight specification
+	"""Extract short description by finding and cutting after weight specification or before bold headers
 
-	Short description ends after the line containing "Gewicht:" (weight specification).
-	Everything after that line (advertising text, marketing copy) is removed.
+	Short description ends at:
+	1. The line containing "Gewicht:" (weight specification), OR
+	2. Before bold header sections start (lines like "Display-Typ:", "Diagonalabmessung:", etc.)
+
+	Everything after that point (advertising text, detailed specs with bold headers) is removed.
 
 	Args:
 		full_description: Full product description string from EGIS API
 
 	Returns:
-		str: Truncated short description ending with weight line, or original if no weight found
+		str: Truncated short description, or original if no cut point found
 	"""
 	import re
 
@@ -426,14 +429,10 @@ def extract_short_description(full_description):
 
 	description = full_description.strip()
 
-	# Look for the weight line (in German: "Gewicht:")
-	# This line typically looks like: "Gewicht: 1,84 kg." or "Gewicht: 1.84 kg"
+	# STRATEGY 1: Look for the weight line (in German: "Gewicht:")
+	# This line typically looks like: "Gewicht: 1,84 kg." or "Gewicht: 1.01 kg"
 	# We want to include this line but remove everything after it
-
-	# Pattern to match the weight line with various formats
-	# Matches: "Gewicht: 1,84 kg" or "Gewicht: 1.84 kg." etc.
 	weight_line_pattern = r'Gewicht:\s*\d+[,.]?\d*\s*[kK][gG]\.?'
-
 	match = re.search(weight_line_pattern, description, re.IGNORECASE)
 
 	if match:
@@ -452,17 +451,56 @@ def extract_short_description(full_description):
 				f"Found weight specification at position {cut_position}\n"
 				f"Original length: {len(description)}\n"
 				f"Truncated length: {len(short_desc)}\n"
-				f"Result: {short_desc}",
+				f"Result: {short_desc[:200]}...",
 				"EGIS Short Description - Weight Found"
 			)
 			return short_desc
 
-	# Fallback: If no weight line found, return original description
-	# This handles products that might not have weight specifications
+	# STRATEGY 2: If no weight line found, look for where bold header sections start
+	# Bold headers are lines like "Display-Typ: ...", "Diagonalabmessung: ...", etc.
+	# These appear AFTER the continuous comma-separated text
+	# Pattern: After a period followed by <br> or newline, there's a line starting with "Word:"
+
+	# Split description into lines (handle both <br> tags and newlines)
+	lines = re.split(r'<br\s*/?>\s*|\n', description)
+
+	# Find the first line that looks like a bold header (starts with capitalized word followed by colon)
+	# But NOT lines that have commas in them (those are still continuous text)
+	# Allow mixed case field names like "Display-Typ", "Min Betriebstemperatur", "KVM-Konsole"
+	bold_header_pattern = r'^[A-ZÄÖÜ][A-Za-zäöüßÄÖÜ\-\s]*:'
+
+	cut_line_index = None
+	for i, line in enumerate(lines):
+		line = line.strip()
+		if line and re.match(bold_header_pattern, line):
+			# This looks like a bold header line
+			# Distinguish between basic info (ends with period) and detailed specs (no period)
+			# Basic info lines: "Produkttyp: Laptop, Formfaktor: Klappgehäuse." (keep)
+			# Detailed spec lines: "Display-Typ: KVM-Konsole" (remove)
+			if not line.endswith('.'):
+				# Line doesn't end with period = detailed spec section starts here
+				cut_line_index = i
+				break
+
+	if cut_line_index is not None and cut_line_index > 0:
+		# Found bold header section - keep everything before it
+		short_desc = '<br>'.join(lines[:cut_line_index]).strip()
+
+		frappe.log_error(
+			f"Found bold header section at line {cut_line_index}\n"
+			f"Original lines: {len(lines)}\n"
+			f"Kept lines: {cut_line_index}\n"
+			f"First bold header: {lines[cut_line_index][:100] if cut_line_index < len(lines) else 'N/A'}\n"
+			f"Result: {short_desc[:200]}...",
+			"EGIS Short Description - Bold Headers Found"
+		)
+		return short_desc
+
+	# Fallback: No weight and no bold headers found - return original
 	frappe.log_error(
-		f"No weight specification found in description\n"
+		f"No cut point found in description\n"
 		f"Description: {description[:200]}...",
-		"EGIS Short Description - No Weight"
+		"EGIS Short Description - No Cut Point"
 	)
 	return description
 

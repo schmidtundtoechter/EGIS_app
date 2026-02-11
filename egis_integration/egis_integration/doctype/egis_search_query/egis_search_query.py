@@ -456,51 +456,97 @@ def extract_short_description(full_description):
 			)
 			return short_desc
 
-	# STRATEGY 2: If no weight line found, look for where bold header sections start
-	# Bold headers are lines like "Display-Typ: ...", "Diagonalabmessung: ...", etc.
-	# These appear AFTER the continuous comma-separated text
-	# Pattern: After a period followed by <br> or newline, there's a line starting with "Word:"
+	# STRATEGY 2: If no weight line found, look for empty line separator or bold header sections
+	# Manager guidance: "Delete everything after the first empty line"
+	# Empty lines separate basic info from detailed specification sections
 
 	# Split description into lines (handle both <br> tags and newlines)
 	lines = re.split(r'<br\s*/?>\s*|\n', description)
 
-	# Find the first line that looks like a bold header (starts with capitalized word followed by colon)
-	# But NOT lines that have commas in them (those are still continuous text)
-	# Allow mixed case field names like "Display-Typ", "Min Betriebstemperatur", "KVM-Konsole"
-	bold_header_pattern = r'^[A-ZÄÖÜ][A-Za-zäöüßÄÖÜ\-\s]*:'
-
 	cut_line_index = None
+	seen_content = False  # Track if we've seen non-empty content
+
+	# PASS 1: Look for empty line separator (primary detection method)
 	for i, line in enumerate(lines):
-		line = line.strip()
-		if line and re.match(bold_header_pattern, line):
-			# This looks like a bold header line
-			# Distinguish between basic info (ends with period) and detailed specs (no period)
-			# Basic info lines: "Produkttyp: Laptop, Formfaktor: Klappgehäuse." (keep)
-			# Detailed spec lines: "Display-Typ: KVM-Konsole" (remove)
-			if not line.endswith('.'):
-				# Line doesn't end with period = detailed spec section starts here
-				cut_line_index = i
-				break
+		line_stripped = line.strip()
 
-	if cut_line_index is not None and cut_line_index > 0:
-		# Found bold header section - keep everything before it
-		short_desc = '<br>'.join(lines[:cut_line_index]).strip()
+		if line_stripped:
+			# Non-empty line
+			seen_content = True
+		elif seen_content:
+			# Empty line found AFTER we've seen content
+			# This is the separator between basic info and detailed specs
+			cut_line_index = i
+			frappe.log_error(
+				f"Found empty line separator at line {i}\n"
+				f"Original lines: {len(lines)}\n"
+				f"Kept lines: {cut_line_index}\n"
+				f"Detection method: Empty line\n",
+				"EGIS Short Description - Empty Line Found"
+			)
+			break
 
+	# PASS 2: If no empty line found, look for bold header pattern (fallback)
+	if cut_line_index is None:
+		# Pattern: Line starts with capitalized word followed by colon
+		# Examples: "Display-Typ:", "Diagonalabmessung:", "Min Betriebstemperatur:"
+		bold_header_pattern = r'^[A-ZÄÖÜ][A-Za-zäöüßÄÖÜ\-\s]*:'
+
+		for i, line in enumerate(lines):
+			line_stripped = line.strip()
+			if line_stripped and re.match(bold_header_pattern, line_stripped):
+				# Distinguish between basic info (ends with period) and detailed specs (no period)
+				# Basic info: "Produkttyp: Laptop, Formfaktor: Klappgehäuse." (KEEP)
+				# Detailed specs: "Display-Typ: IPS LCD" (REMOVE)
+				if not line_stripped.endswith('.'):
+					# Found bold header WITHOUT period - this is where detailed specs start
+					cut_line_index = i
+					frappe.log_error(
+						f"Found bold header at line {i}\n"
+						f"Original lines: {len(lines)}\n"
+						f"Kept lines: {cut_line_index}\n"
+						f"First bold header: {line_stripped[:100]}\n"
+						f"Detection method: Bold header fallback\n",
+						"EGIS Short Description - Bold Header Found"
+					)
+					break
+
+	# PASS 3: If still no cut point found, use manager's fallback strategy
+	# "If that doesn't always work, you'll have to delete all the text after the first paragraph"
+	if cut_line_index is None and len(lines) > 3:
+		# Keep only first 2-3 lines (first paragraph of basic info)
+		# This ensures we never return full description when checkbox is checked
+		cut_line_index = min(3, len(lines))
 		frappe.log_error(
-			f"Found bold header section at line {cut_line_index}\n"
+			f"Using first paragraph fallback at line {cut_line_index}\n"
 			f"Original lines: {len(lines)}\n"
 			f"Kept lines: {cut_line_index}\n"
-			f"First bold header: {lines[cut_line_index][:100] if cut_line_index < len(lines) else 'N/A'}\n"
-			f"Result: {short_desc[:200]}...",
-			"EGIS Short Description - Bold Headers Found"
+			f"Detection method: First paragraph fallback\n",
+			"EGIS Short Description - First Paragraph Fallback"
 		)
-		return short_desc
 
-	# Fallback: No weight and no bold headers found - return original
+	# Apply cut if we found a separator
+	if cut_line_index is not None and cut_line_index > 0:
+		short_desc = '<br>'.join(lines[:cut_line_index]).strip()
+
+		# Make sure we got something meaningful (at least 20 characters)
+		if len(short_desc) >= 20:
+			frappe.log_error(
+				f"Successfully truncated description\n"
+				f"Original lines: {len(lines)}\n"
+				f"Kept lines: {cut_line_index}\n"
+				f"Result length: {len(short_desc)}\n"
+				f"Result preview: {short_desc[:200]}...",
+				"EGIS Short Description - Truncation Success"
+			)
+			return short_desc
+
+	# Final fallback: If description is very short (<=3 lines), return as-is
 	frappe.log_error(
-		f"No cut point found in description\n"
-		f"Description: {description[:200]}...",
-		"EGIS Short Description - No Cut Point"
+		f"Description too short to truncate\n"
+		f"Total lines: {len(lines)}\n"
+		f"Description preview: {description[:200]}...",
+		"EGIS Short Description - Too Short"
 	)
 	return description
 

@@ -408,16 +408,18 @@ def fetch_product_detail(product_number):
 	return None
 
 def extract_short_description(full_description):
-	"""Extract short description by finding and cutting after weight specification or before bold headers
+	"""Extract short description using manager's simple approach: cut at first empty line or bold section.
 
-	Short description ends at:
-	1. The line containing "Gewicht:" (weight specification), OR
-	2. Before bold header sections start (lines like "Display-Typ:", "Diagonalabmessung:", etc.)
+	Manager's guidance: "Delete everything after the first empty line. Or delete every line with a bold letter at the beginning."
 
-	Everything after that point (advertising text, detailed specs with bold headers) is removed.
+	Strategy:
+	1. Weight line detection (keep - works perfectly)
+	2. Cut at first double-break (<br><br> or \n\n) - PRIMARY METHOD
+	3. Cut before first bold header section - FALLBACK
+	4. Keep first 5 lines if no boundary found - LAST RESORT
 
 	Args:
-		full_description: Full product description string from EGIS API
+		full_description: Full product description HTML from EGIS API
 
 	Returns:
 		str: Truncated short description, or original if no cut point found
@@ -429,124 +431,157 @@ def extract_short_description(full_description):
 
 	description = full_description.strip()
 
-	# STRATEGY 1: Look for the weight line (in German: "Gewicht:")
-	# This line typically looks like: "Gewicht: 1,84 kg." or "Gewicht: 1.01 kg"
-	# We want to include this line but remove everything after it
+	# === STRATEGY 1: Weight line detection (unchanged - works perfectly) ===
 	weight_line_pattern = r'Gewicht:\s*\d+[,.]?\d*\s*[kK][gG]\.?'
 	match = re.search(weight_line_pattern, description, re.IGNORECASE)
 
 	if match:
-		# Cut description at the end of the weight line
 		cut_position = match.end()
-
-		# If there's a period right after, include it
 		if cut_position < len(description) and description[cut_position] == '.':
 			cut_position += 1
 
 		short_desc = description[:cut_position].strip()
 
-		# Make sure we got something meaningful (at least 20 characters)
 		if len(short_desc) >= 20:
 			frappe.log_error(
-				f"Found weight specification at position {cut_position}\n"
+				f"✓ WEIGHT LINE FOUND\n"
+				f"Product preview: {short_desc[:100]}...\n"
+				f"Cut at position: {cut_position}\n"
 				f"Original length: {len(description)}\n"
-				f"Truncated length: {len(short_desc)}\n"
-				f"Result: {short_desc[:200]}...",
-				"EGIS Short Description - Weight Found"
+				f"Result length: {len(short_desc)}\n"
+				f"Full result:\n{short_desc}",
+				"EGIS Short Desc - Weight Strategy"
 			)
 			return short_desc
 
-	# STRATEGY 2: If no weight line found, look for empty line separator or bold header sections
-	# Manager guidance: "Delete everything after the first empty line"
-	# Empty lines separate basic info from detailed specification sections
+	# === STRATEGY 2: Cut at first empty line separator (SIMPLE & ROBUST) ===
+	# Manager: "Delete everything after the first empty line"
+	#
+	# Detect double breaks in various formats:
+	# - <br><br>
+	# - <br /><br />
+	# - <br>\n<br>
+	# - \n\n
 
-	# Split description into lines (handle both <br> tags and newlines)
+	# Method A: Direct detection of double-break patterns
+	double_break_patterns = [
+		r'<br\s*/?>\s*<br\s*/?>',  # <br><br> or <br /><br />
+		r'<br\s*/?>\s*\n\s*<br\s*/?>', # <br>\n<br>
+		r'\n\s*\n',  # \n\n (plain text)
+	]
+
+	earliest_cut = None
+	cut_method = None
+
+	for pattern in double_break_patterns:
+		match = re.search(pattern, description, re.IGNORECASE)
+		if match:
+			if earliest_cut is None or match.start() < earliest_cut:
+				earliest_cut = match.start()
+				cut_method = f"Double break pattern: {pattern}"
+
+	if earliest_cut is not None and earliest_cut > 100:  # Ensure we keep at least 100 chars
+		short_desc = description[:earliest_cut].strip()
+
+		frappe.log_error(
+			f"✓ EMPTY LINE SEPARATOR FOUND\n"
+			f"Product preview: {short_desc[:100]}...\n"
+			f"Detection: {cut_method}\n"
+			f"Cut at position: {earliest_cut}\n"
+			f"Original length: {len(description)}\n"
+			f"Result length: {len(short_desc)}\n"
+			f"Full result:\n{short_desc}",
+			"EGIS Short Desc - Empty Line Strategy"
+		)
+		return short_desc
+
+	# === STRATEGY 3: Cut before bold header section (FALLBACK) ===
+	# Manager: "Delete every line with a bold letter at the beginning"
+	#
+	# Detect lines like:
+	# - <b>Display-Typ:</b> value
+	# - <b>Min Betriebstemperatur:</b> value
+	# - Display-Typ: value (without explicit <b> tag in text representation)
+
+	# Split by line breaks for line-by-line analysis
 	lines = re.split(r'<br\s*/?>\s*|\n', description)
 
 	cut_line_index = None
-	seen_content = False  # Track if we've seen non-empty content
+	seen_content_lines = 0
 
-	# PASS 1: Look for empty line separator (primary detection method)
 	for i, line in enumerate(lines):
 		line_stripped = line.strip()
 
-		if line_stripped:
-			# Non-empty line
-			seen_content = True
-		elif seen_content:
-			# Empty line found AFTER we've seen content
-			# This is the separator between basic info and detailed specs
+		if not line_stripped:
+			continue
+
+		seen_content_lines += 1
+
+		# Skip first 2 lines (title + first basic info line)
+		if seen_content_lines <= 2:
+			continue
+
+		# Detect bold header patterns:
+		# 1. Explicit <b>Field:</b> tag
+		# 2. Line starts with capital letter word(s) and colon (no period at end)
+		# 3. Must NOT look like continuous sentence (no comma before colon)
+
+		is_bold_header = False
+
+		# Pattern 1: Explicit <b> tag with colon
+		if re.search(r'<b>[^<]+:</b>', line_stripped, re.IGNORECASE):
+			is_bold_header = True
+
+		# Pattern 2: Starts with capital letter, has colon, no period at end
+		# Examples: "Display-Typ: LCD", "Min Betriebstemperatur: 0 °C"
+		# NOT: "Produkttyp: Laptop, Formfaktor: Klappgehäuse." (this is basic info)
+		elif re.match(r'^[A-ZÄÖÜ][A-Za-zäöüßÄÖÜ\s\-/()]*:\s*[^,]*$', line_stripped):
+			# Must not be part of comma-separated list (basic info style)
+			# Must not end with period (basic info style)
+			if not line_stripped.endswith('.') and ',' not in line_stripped[:30]:
+				is_bold_header = True
+
+		if is_bold_header:
 			cut_line_index = i
+			short_desc = '<br>'.join(lines[:cut_line_index]).strip()
+
 			frappe.log_error(
-				f"Found empty line separator at line {i}\n"
-				f"Original lines: {len(lines)}\n"
-				f"Kept lines: {cut_line_index}\n"
-				f"Detection method: Empty line\n",
-				"EGIS Short Description - Empty Line Found"
-			)
-			break
-
-	# PASS 2: If no empty line found, look for bold header pattern (fallback)
-	if cut_line_index is None:
-		# Pattern: Line starts with capitalized word followed by colon
-		# Examples: "Display-Typ:", "Diagonalabmessung:", "Min Betriebstemperatur:"
-		bold_header_pattern = r'^[A-ZÄÖÜ][A-Za-zäöüßÄÖÜ\-\s]*:'
-
-		for i, line in enumerate(lines):
-			line_stripped = line.strip()
-			if line_stripped and re.match(bold_header_pattern, line_stripped):
-				# Distinguish between basic info (ends with period) and detailed specs (no period)
-				# Basic info: "Produkttyp: Laptop, Formfaktor: Klappgehäuse." (KEEP)
-				# Detailed specs: "Display-Typ: IPS LCD" (REMOVE)
-				if not line_stripped.endswith('.'):
-					# Found bold header WITHOUT period - this is where detailed specs start
-					cut_line_index = i
-					frappe.log_error(
-						f"Found bold header at line {i}\n"
-						f"Original lines: {len(lines)}\n"
-						f"Kept lines: {cut_line_index}\n"
-						f"First bold header: {line_stripped[:100]}\n"
-						f"Detection method: Bold header fallback\n",
-						"EGIS Short Description - Bold Header Found"
-					)
-					break
-
-	# PASS 3: If still no cut point found, use manager's fallback strategy
-	# "If that doesn't always work, you'll have to delete all the text after the first paragraph"
-	if cut_line_index is None and len(lines) > 3:
-		# Keep only first 2-3 lines (first paragraph of basic info)
-		# This ensures we never return full description when checkbox is checked
-		cut_line_index = min(3, len(lines))
-		frappe.log_error(
-			f"Using first paragraph fallback at line {cut_line_index}\n"
-			f"Original lines: {len(lines)}\n"
-			f"Kept lines: {cut_line_index}\n"
-			f"Detection method: First paragraph fallback\n",
-			"EGIS Short Description - First Paragraph Fallback"
-		)
-
-	# Apply cut if we found a separator
-	if cut_line_index is not None and cut_line_index > 0:
-		short_desc = '<br>'.join(lines[:cut_line_index]).strip()
-
-		# Make sure we got something meaningful (at least 20 characters)
-		if len(short_desc) >= 20:
-			frappe.log_error(
-				f"Successfully truncated description\n"
-				f"Original lines: {len(lines)}\n"
-				f"Kept lines: {cut_line_index}\n"
+				f"✓ BOLD HEADER FOUND\n"
+				f"Product preview: {short_desc[:100]}...\n"
+				f"First bold header: {line_stripped[:100]}\n"
+				f"Cut at line: {i} (of {len(lines)} total)\n"
+				f"Original length: {len(description)}\n"
 				f"Result length: {len(short_desc)}\n"
-				f"Result preview: {short_desc[:200]}...",
-				"EGIS Short Description - Truncation Success"
+				f"Full result:\n{short_desc}",
+				"EGIS Short Desc - Bold Header Strategy"
 			)
 			return short_desc
 
-	# Final fallback: If description is very short (<=3 lines), return as-is
+	# === STRATEGY 4: Keep first paragraph (5 lines) - LAST RESORT ===
+	# If no boundary detected, keep first 5 lines as "first paragraph"
+
+	if len(lines) > 5:
+		short_desc = '<br>'.join(lines[:5]).strip()
+
+		frappe.log_error(
+			f"⚠ NO BOUNDARY FOUND - USING FIRST 5 LINES\n"
+			f"Product preview: {short_desc[:100]}...\n"
+			f"Total lines: {len(lines)}\n"
+			f"Kept lines: 5\n"
+			f"Original length: {len(description)}\n"
+			f"Result length: {len(short_desc)}\n"
+			f"Full result:\n{short_desc}",
+			"EGIS Short Desc - First Paragraph Fallback"
+		)
+		return short_desc
+
+	# === FINAL FALLBACK: Return original (very short description) ===
 	frappe.log_error(
-		f"Description too short to truncate\n"
+		f"ℹ DESCRIPTION TOO SHORT - NO TRUNCATION\n"
 		f"Total lines: {len(lines)}\n"
-		f"Description preview: {description[:200]}...",
-		"EGIS Short Description - Too Short"
+		f"Length: {len(description)}\n"
+		f"Content:\n{description}",
+		"EGIS Short Desc - No Truncation"
 	)
 	return description
 

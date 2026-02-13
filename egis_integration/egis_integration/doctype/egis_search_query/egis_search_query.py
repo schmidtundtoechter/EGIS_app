@@ -313,7 +313,37 @@ def fetch_product_detail(product_number, short_mode=False):
 
 			# === SHORT MODE: Return only basic description, no marketing, no features ===
 			if short_mode:
-				# Try LongSummaryDescription first (usually has good basic info)
+			# Priority 1: ShortSummaryDescription (designed to be short)
+				short_summary = root.find('.//ns:ShortSummaryDescription', ns)
+				if short_summary is None:
+					short_summary = root.find('.//ShortSummaryDescription')
+				if short_summary is not None and short_summary.text and short_summary.text.strip():
+					frappe.log_error(
+						f"✓ SHORT MODE - Using ShortSummaryDescription\n"
+						f"Product: {product_number}\n"
+						f"Length: {len(short_summary.text.strip())}\n"
+						f"Content:\n{short_summary.text.strip()}",
+						"EGIS Short Mode - ShortSummary"
+					)
+					return short_summary.text.strip()
+
+
+			# Priority 2: ShortDesc (also designed to be short)
+				short_desc = root.find('.//ns:ShortDesc', ns)
+				if short_desc is None:
+					short_desc = root.find('.//ShortDesc')
+				if short_desc is not None and short_desc.text and short_desc.text.strip():
+					frappe.log_error(
+						f"✓ SHORT MODE - Using ShortDesc\n"
+						f"Product: {product_number}\n"
+						f"Length: {len(short_desc.text.strip())}\n"
+						f"Content:\n{short_desc.text.strip()}",
+						"EGIS Short Mode - ShortDesc"
+					)
+					return short_desc.text.strip()
+
+
+			# Priority 3: LongSummaryDescription (fallback - might still be long)
 				long_summary = root.find('.//ns:LongSummaryDescription', ns)
 				if long_summary is None:
 					long_summary = root.find('.//LongSummaryDescription')
@@ -335,35 +365,8 @@ def fetch_product_detail(product_number, short_mode=False):
 					)
 					return formatted_desc
 
-				# Fallback to ShortSummaryDescription
-				short_summary = root.find('.//ns:ShortSummaryDescription', ns)
-				if short_summary is None:
-					short_summary = root.find('.//ShortSummaryDescription')
-				if short_summary is not None and short_summary.text and short_summary.text.strip():
-					frappe.log_error(
-						f"✓ SHORT MODE - Using ShortSummaryDescription\n"
-						f"Product: {product_number}\n"
-						f"Length: {len(short_summary.text.strip())}\n"
-						f"Content:\n{short_summary.text.strip()}",
-						"EGIS Short Mode - ShortSummary"
-					)
-					return short_summary.text.strip()
 
-				# Fallback to ShortDesc
-				short_desc = root.find('.//ns:ShortDesc', ns)
-				if short_desc is None:
-					short_desc = root.find('.//ShortDesc')
-				if short_desc is not None and short_desc.text and short_desc.text.strip():
-					frappe.log_error(
-						f"✓ SHORT MODE - Using ShortDesc\n"
-						f"Product: {product_number}\n"
-						f"Length: {len(short_desc.text.strip())}\n"
-						f"Content:\n{short_desc.text.strip()}",
-						"EGIS Short Mode - ShortDesc"
-					)
-					return short_desc.text.strip()
-
-				# No short description found
+			# No description found
 				frappe.log_error(
 					f"⚠ SHORT MODE - No description found\n"
 					f"Product: {product_number}",

@@ -261,15 +261,20 @@ def build_product_specification_xml(username, password, product_number):
 	xml_str = ET.tostring(root, encoding='utf-8', method='xml')
 	return xml_str.decode('utf-8')
 
-def fetch_product_detail(product_number):
-	"""Fetch full product details including long description and Features from EGIS
+def fetch_product_detail(product_number, short_mode=False):
+	"""Fetch product details from EGIS - short or full version based on mode
+
+	Args:
+		product_number: EGIS proprietary product number
+		short_mode: If True, return only short descriptions (no marketing text, no feature details)
+		            If False, return full description with marketing text and all features
 
 	Uses the productSpecificationQuery API which returns:
-	- LongSummaryDescription (preferred)
-	- ShortSummaryDescription
-	- ShortDesc (from CNET or ICECAT)
-	- MarketingText
-	- Feature (multiple) with FeatureGroup, Key, Value
+	- LongSummaryDescription (preferred for short mode)
+	- ShortSummaryDescription (fallback for short mode)
+	- ShortDesc (from CNET or ICECAT - fallback for short mode)
+	- MarketingText (only in full mode)
+	- Feature (multiple) with FeatureGroup, Key, Value (only in full mode)
 	"""
 	try:
 		egis_settings = frappe.get_doc("EGIS Settings")
@@ -306,6 +311,67 @@ def fetch_product_detail(product_number):
 			root = ET.fromstring(response.text)
 			ns = {'ns': 'http://www.egis-online.de/EBC/schema/ProductSpecificationQueryResponse'}
 
+			# === SHORT MODE: Return only basic description, no marketing, no features ===
+			if short_mode:
+				# Try LongSummaryDescription first (usually has good basic info)
+				long_summary = root.find('.//ns:LongSummaryDescription', ns)
+				if long_summary is None:
+					long_summary = root.find('.//LongSummaryDescription')
+				if long_summary is not None and long_summary.text and long_summary.text.strip():
+					# Format with HTML line breaks after each sentence
+					formatted_desc = long_summary.text.strip()
+					sentences = formatted_desc.split('. ')
+					if len(sentences) > 1:
+						formatted_desc = '.<br>'.join(sentences)
+						if not formatted_desc.endswith('.'):
+							formatted_desc += '.'
+
+					frappe.log_error(
+						f"✓ SHORT MODE - Using LongSummaryDescription\n"
+						f"Product: {product_number}\n"
+						f"Length: {len(formatted_desc)}\n"
+						f"Content:\n{formatted_desc}",
+						"EGIS Short Mode - LongSummary"
+					)
+					return formatted_desc
+
+				# Fallback to ShortSummaryDescription
+				short_summary = root.find('.//ns:ShortSummaryDescription', ns)
+				if short_summary is None:
+					short_summary = root.find('.//ShortSummaryDescription')
+				if short_summary is not None and short_summary.text and short_summary.text.strip():
+					frappe.log_error(
+						f"✓ SHORT MODE - Using ShortSummaryDescription\n"
+						f"Product: {product_number}\n"
+						f"Length: {len(short_summary.text.strip())}\n"
+						f"Content:\n{short_summary.text.strip()}",
+						"EGIS Short Mode - ShortSummary"
+					)
+					return short_summary.text.strip()
+
+				# Fallback to ShortDesc
+				short_desc = root.find('.//ns:ShortDesc', ns)
+				if short_desc is None:
+					short_desc = root.find('.//ShortDesc')
+				if short_desc is not None and short_desc.text and short_desc.text.strip():
+					frappe.log_error(
+						f"✓ SHORT MODE - Using ShortDesc\n"
+						f"Product: {product_number}\n"
+						f"Length: {len(short_desc.text.strip())}\n"
+						f"Content:\n{short_desc.text.strip()}",
+						"EGIS Short Mode - ShortDesc"
+					)
+					return short_desc.text.strip()
+
+				# No short description found
+				frappe.log_error(
+					f"⚠ SHORT MODE - No description found\n"
+					f"Product: {product_number}",
+					"EGIS Short Mode - Not Found"
+				)
+				return None
+
+			# === FULL MODE: Build complete description with marketing and features ===
 			description_parts = []
 
 			# 1. First add any text descriptions (LongSummaryDescription, MarketingText, etc.)
@@ -383,7 +449,16 @@ def fetch_product_detail(product_number):
 				description_parts.append("<br>".join(feature_texts))
 
 			if description_parts:
-				return "<br><br>".join(description_parts)
+				full_desc = "<br><br>".join(description_parts)
+				frappe.log_error(
+					f"✓ FULL MODE - Complete description built\n"
+					f"Product: {product_number}\n"
+					f"Length: {len(full_desc)}\n"
+					f"Parts: {len(description_parts)} (summary + marketing + features)\n"
+					f"Preview:\n{full_desc[:300]}...",
+					"EGIS Full Mode - Complete"
+				)
+				return full_desc
 
 			# Fallback to short descriptions if no long description or features
 			short_summary = root.find('.//ns:ShortSummaryDescription', ns)
@@ -759,8 +834,8 @@ def import_items(items, import_short_description_only=1):
 		product_number = item.get("proprietary_product_number")
 		short_description = item.get("proprietary_product_description")
 
-		# Always fetch full long description from EGIS ProductDetail API
-		long_description = fetch_product_detail(product_number)
+		# Fetch description from EGIS API - short or full mode based on checkbox
+		long_description = fetch_product_detail(product_number, short_mode=import_short_only)
 		if not long_description:
 			# Fallback to short description if long description not available
 			long_description = short_description
@@ -769,18 +844,11 @@ def import_items(items, import_short_description_only=1):
 		frappe.log_error(
 			f"Product: {product_number}\n"
 			f"Checkbox value: {import_short_only}\n"
-			f"Long description from API (length): {len(long_description) if long_description else 0}\n",
-			"EGIS Import Debug"
+			f"Mode: {'SHORT MODE (no marketing/features)' if import_short_only else 'FULL MODE (with marketing/features)'}\n"
+			f"Description length: {len(long_description) if long_description else 0}\n"
+			f"Preview: {long_description[:200] if long_description else 'None'}...",
+			"EGIS Import - Description Fetch"
 		)
-
-		if import_short_only and long_description:
-			# Truncate at weight specification (remove advertising text)
-			long_description = extract_short_description(long_description)
-			frappe.log_error(
-				f"After truncation (length): {len(long_description)}\n"
-				f"Result: {long_description[:200]}...",
-				"EGIS Import Debug - After Truncation"
-			)
 
 
 		brand = get_brand(item)
@@ -875,15 +943,11 @@ def update_item(item, egis_settings, import_short_only=1):
 	product_number = item.get("proprietary_product_number")
 	short_description = item.get("proprietary_product_description")
 
-	# Always fetch full long description from EGIS ProductDetail API
-	long_description = fetch_product_detail(product_number)
+	# Fetch description from EGIS API - short or full mode based on checkbox
+	long_description = fetch_product_detail(product_number, short_mode=import_short_only)
 	if not long_description:
 		# Fallback to short description if long description not available
 		long_description = short_description
-
-	if import_short_only and long_description:
-		# Truncate at weight specification (remove advertising text)
-		long_description = extract_short_description(long_description)
 
 	if item_erpnext.item_name != item.get("proprietary_product_description"):
 		item_erpnext.item_name = item.get("proprietary_product_description")

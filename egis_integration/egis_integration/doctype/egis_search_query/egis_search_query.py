@@ -873,6 +873,11 @@ def import_items(items, import_short_description_only=1):
 		# Mark as EGIS item and store EGIS product number for API queries
 		item_doc.is_egis_item = 1
 		item_doc.custom_egis_product_number = product_number
+		if egis_settings.item_tax_template:
+			item_doc.append("taxes", {
+				"item_tax_template": egis_settings.item_tax_template,
+				"tax_category": egis_settings.tax_category or None
+			})
 		item_doc.save()
 
 		# Create Item Price for selling (Quotations/Sales Orders) using purchase price

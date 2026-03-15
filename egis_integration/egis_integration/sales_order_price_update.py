@@ -317,13 +317,15 @@ def get_egis_item_price(item_code, egis_settings):
 
 	# Send request
 	headers = {'Content-Type': 'text/xml; charset=utf-8'}
+	ssl_verify = not egis_settings.disable_ssl_verification
 
 	try:
 		response = requests.post(
 			endpoint,
 			data=xml_payload.encode('utf-8'),
 			headers=headers,
-			timeout=30
+			timeout=30,
+			verify=ssl_verify
 		)
 
 		if response.status_code != 200:

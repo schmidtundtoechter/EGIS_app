@@ -11,6 +11,7 @@
   "url",
   "user",
   "password",
+  "disable_ssl_verification",
   "item_settings_section",
   "default_selling_price_list",
   "retail_price_list",
@@ -46,6 +47,13 @@
    "fieldname": "password",
    "fieldtype": "Password",
    "label": "Password"
+  },
+  {
+   "default": "0",
+   "description": "Disable SSL certificate verification for EGIS API requests. Use only if the EGIS server has a self-signed certificate.",
+   "fieldname": "disable_ssl_verification",
+   "fieldtype": "Check",
+   "label": "Disable SSL Verification"
   },
   {
    "fieldname": "item_settings_section",

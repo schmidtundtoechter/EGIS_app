@@ -296,7 +296,8 @@ def fetch_product_detail(product_number, short_mode=False):
 		)
 
 		headers = {'Content-Type': 'text/xml; charset=utf-8'}
-		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30)
+		ssl_verify = not egis_settings.disable_ssl_verification
+		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30, verify=ssl_verify)
 
 		if response.status_code == 200:
 			# Check for error response
@@ -696,9 +697,10 @@ def make_request(search_term, search_options, start_row):
 	headers = {
 		'Content-Type': 'text/xml; charset=utf-8'
 	}
+	ssl_verify = not egis_settings.disable_ssl_verification
 
 	try:
-		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30)
+		response = requests.post(endpoint, data=xml_payload.encode('utf-8'), headers=headers, timeout=30, verify=ssl_verify)
 
 		# Check HTTP status
 		if response.status_code != 200:
